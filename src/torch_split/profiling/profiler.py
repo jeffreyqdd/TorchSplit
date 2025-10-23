@@ -51,16 +51,19 @@ class InstrumentedModel(fx.Interpreter):
         return ret
 
     def run_node(self, n: fx.Node):
-        torch.cuda.reset_peak_memory_stats(self._device)
+        # if self._device.type == " cuda":
+        #     torch.cuda.reset_peak_memory_stats(self._device)
         time_start = time.perf_counter_ns()
         ret = super().run_node(n)
 
         time_elapsed_ns = time.perf_counter_ns() - time_start
-        peak_memory_used_bytes = torch.cuda.memory_stats(self._device)["reserved_bytes.all.peak"]
+        peak_memory_used_bytes = (
+            torch.cuda.memory_stats(self._device)["reserved_bytes.all.peak"] if self._device.type == "cuda" else 0
+        )
         output_size_bytes = _estimate_tensor_size(ret)
 
         print(
-            f"Node {n.name}: time {time_elapsed_ns / 1e6:.3f} ms, "
+            f"Node {n.name:<30}: time {time_elapsed_ns / 1e6:.3f} ms, "
             f"peak memory {peak_memory_used_bytes / 1e6:.3f} MB, "
             f"output size {output_size_bytes / 1e6:.3f} MB"
         )

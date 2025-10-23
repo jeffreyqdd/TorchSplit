@@ -76,3 +76,6 @@ class TestInterface(TorchSplitClient):
 
 interpreter = profiler.InstrumentedModel(TestInterface())
 interpreter.run(torch.randn(1, 3, 32, 32))
+interpreter.run(torch.randn(1, 3, 32, 32))
+interpreter.run(torch.randn(1, 3, 32, 32))
+interpreter.run(torch.randn(1, 3, 32, 32))
