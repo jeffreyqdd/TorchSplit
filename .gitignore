@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.env
+.venv/
+
+# Package management
+*.egg-info/
+dist/
+build/
+
+# Type checking
+.mypy_cache/
+
+# Testing
+.pytest_cache/
+.coverage
+
+# IDE
+.vscode/settings.json
+
+# System
+.DS_Store
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+
+# Project specific
+.bin/
