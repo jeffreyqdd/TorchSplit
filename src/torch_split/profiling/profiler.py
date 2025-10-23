@@ -51,19 +51,36 @@ class InstrumentedModel(fx.Interpreter):
         return ret
 
     def run_node(self, n: fx.Node):
-        # if self._device.type == " cuda":
-        #     torch.cuda.reset_peak_memory_stats(self._device)
-        time_start = time.perf_counter_ns()
+        # Synchronize before timing to ensure clean start
+        if self._device.type == "cuda":
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats(self._device)
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+            start_event.record()
+
+        else:
+            time_start = time.perf_counter_ns()
+
+        # Run the node
         ret = super().run_node(n)
 
-        time_elapsed_ns = time.perf_counter_ns() - time_start
-        peak_memory_used_bytes = (
-            torch.cuda.memory_stats(self._device)["reserved_bytes.all.peak"] if self._device.type == "cuda" else 0
-        )
+        # Synchronize and measure
+        if self._device.type == "cuda":
+            end_event.record()
+            torch.cuda.synchronize()
+            time_elapsed_ms = start_event.elapsed_time(end_event)
+            peak_memory_used_bytes = torch.cuda.max_memory_reserved(self._device)
+        else:
+            time_elapsed_ms = (time.perf_counter_ns() - time_start) / 1e6
+            peak_memory_used_bytes = 0
+
+        # Estimate output size
         output_size_bytes = _estimate_tensor_size(ret)
 
         print(
-            f"Node {n.name:<30}: time {time_elapsed_ns / 1e6:.3f} ms, "
+            f"Node {n.name:<30}: "
+            f"time {time_elapsed_ms:.3f} ms, "
             f"peak memory {peak_memory_used_bytes / 1e6:.3f} MB, "
             f"output size {output_size_bytes / 1e6:.3f} MB"
         )
