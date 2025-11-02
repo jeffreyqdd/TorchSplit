@@ -1,7 +1,6 @@
 """This module captures the computation graph of a PyTorch model using torch.fx"""
 
 import importlib
-import io
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable
@@ -9,72 +8,16 @@ from dataclasses import dataclass, field
 
 import graphviz  # type: ignore
 import torch
-import torch._dynamo as dynamo
 import torch.fx as fx
 from frozendict import frozendict
 
 import torch_split.logging as logging
 from torch_split.client import TorchSplitClient
+from torch_split.graph_utils import capture_graph
 
 logger = logging.get_logger(__name__)
 
 cond_mod = importlib.import_module("torch._higher_order_ops.cond")
-
-
-def capture_graph(client: TorchSplitClient) -> fx.GraphModule:
-    """
-    Capture the computation graph of a PyTorch model using torch.fx.
-
-    Args:
-        client (TorchSplitClient): The client providing the model and example inputs.
-
-    Returns:
-        fx.GraphModule: The captured computation graph as a GraphModule.
-
-    Raises:
-        ValueError: If the export does not return an ExportResult.
-    """
-
-    model = client.get_model()
-    args, kwargs = client.get_example_inputs()
-
-    export_result = dynamo.export(model)(*args, **kwargs)
-
-    if isinstance(export_result, dynamo.eval_frame.ExportResult):
-        return export_result.graph_module
-
-    raise ValueError("Export did not return an ExportResult")
-
-
-def _write_graph_to_buffer(gm: fx.GraphModule, buffer: io.BytesIO) -> None:
-    """
-    Write the FX graph or GraphModule to a bytes buffer.
-
-    Args:
-        gm (fx.GraphModule): The GraphModule to serialize.
-        buffer (io.BytesIO): The buffer to write the serialized graph to.
-    """
-    torch.save(gm, buffer)
-
-
-def _read_graph_from_buffer(buffer: io.BytesIO) -> fx.GraphModule:
-    """
-    Read an FX graph from a bytes buffer.
-    Args:
-        buffer (io.BytesIO): The buffer to read the serialized graph from.
-    Returns:
-        fx.Graph: The deserialized FX graph.
-    Raises:
-        ValueError: If the deserialized object is not an fx.Graph.
-    """
-
-    buffer.seek(0)
-    ret = torch.load(buffer, weights_only=False)
-
-    if not isinstance(ret, fx.GraphModule):
-        raise ValueError(f"Deserialized object is not an fx.Graph but {type(ret)}")
-
-    return ret
 
 
 def _flatten_arguments(items) -> Iterable:
@@ -149,6 +92,7 @@ class TorchGraph:
 
     @staticmethod
     def from_fx_graph(gm: fx.GraphModule, label: str = "root") -> "TorchGraph":
+        print(gm.graph)
         logger.info("[bold blue]Starting graph construction[/] for [cyan]%s[/]", label)
         graph = gm.graph
         # --- basic containers ---

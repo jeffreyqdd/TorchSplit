@@ -1,3 +1,5 @@
+"""Dominance analysis for TorchGraph augmented with ENTRY and EXIT nodes."""
+
 import uuid
 from collections import deque
 from collections.abc import Iterable
@@ -243,7 +245,7 @@ class DominanceInformation:
 
         def add(n: VirtualNodeId, suffix: str = "") -> str:
             name = f"{n.value}{suffix}"
-            graph.node(name, label=label(n))
+            graph.node(name, label=label(n), shape="box")
             return name
 
         if flatten:

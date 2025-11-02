@@ -114,6 +114,7 @@ class PartitionProvider:
         """export the dataflow graph as a pdf"""
         export_path.absolute().mkdir(parents=True, exist_ok=True)
         dot = graphviz.Digraph(name="Dataflow Graph")
+        dot.attr(nodesep="0.1", ranksep="0.3")
         self.torch_graph.render_graph(dot, include_parameters=include_parameters)
         dot.render(export_path / "dataflow_graph", format="pdf")
 
@@ -123,22 +124,27 @@ class PartitionProvider:
         export_path.absolute().mkdir(parents=True, exist_ok=True)
 
         dom_gv = graphviz.Digraph(name="Dominance Set")
+        dom_gv.attr(nodesep="0.1", ranksep="0.3")
         self._dominance.render_graph(self._dominance.dom, dom_gv, flatten=True)
         dom_gv.render(export_path / "dominance_set", format="pdf")
 
         dom_tree_gv = graphviz.Digraph(name="Dominance Tree")
+        dom_tree_gv.attr(nodesep="0.1", ranksep="0.3")
         self._dominance.render_graph(self._dominance.dom_tree, dom_tree_gv)
         dom_tree_gv.render(export_path / "dominance_tree", format="pdf")
 
         pdom_tree_gv = graphviz.Digraph(name="Post Dominance Tree")
+        pdom_tree_gv.attr(nodesep="0.1", ranksep="0.3")
         self._dominance.render_graph(self._dominance.pdom_tree, pdom_tree_gv)
         pdom_tree_gv.render(export_path / "post_dominance_tree", format="pdf")
 
         rev_dom_tree_gv = graphviz.Digraph(name="Reverse Dominance Tree")
+        rev_dom_tree_gv.attr(nodesep="0.1", ranksep="0.3")
         self._dominance.render_graph(self._dominance.reverse_dom_tree, rev_dom_tree_gv)
         rev_dom_tree_gv.render(export_path / "rev_dominance_tree", format="pdf")
 
         rev_pdom_tree_gv = graphviz.Digraph(name="Reverse Post Dominance Tree")
+        rev_pdom_tree_gv.attr(nodesep="0.1", ranksep="0.3")
         self._dominance.render_graph(self._dominance.reverse_pdom_tree, rev_pdom_tree_gv)
         rev_pdom_tree_gv.render(export_path / "rev_post_dominance_tree", format="pdf")
 

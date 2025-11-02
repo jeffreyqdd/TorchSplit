@@ -14,7 +14,7 @@ def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
 
     if not logger.handlers:
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(logging.INFO)
 
         # logger should show time, but not the path to reduce clutter
         # name should give us more than enough information about the source

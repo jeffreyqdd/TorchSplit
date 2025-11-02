@@ -4,7 +4,6 @@ from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
 from torch_split.client import TorchSplitClient
-from torch_split.core import partition
 
 
 # 2) Wrap to present a pure-tensor forward and a single-tensor output
@@ -53,12 +52,17 @@ class TestInterface(TorchSplitClient):
 
         return (pixel_values, input_ids, attention_mask), {}
 
+    def target_device(self) -> torch.device:
+        """Return the target device for the model."""
+        return torch.device("cpu")
 
-# ti = TestInterface()
-pp = partition.PartitionProvider(TestInterface())
+
+ti = TestInterface()
+ti.model.compile()
+# pp = partition.PartitionProvider(TestInterface())
 # pp.visualize_dominance(Path("./.bin/clip"))
 # pp.visualize_dataflow(Path("./.bin/clip"), True)
-pp.create_partition()
+# pp.create_partition()
 # out = tgraph.test()
 # dot = graphviz.Digraph(name="Clip")
 # tgraph.render_graph(dot)
