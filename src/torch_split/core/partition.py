@@ -8,7 +8,6 @@ from pathlib import Path
 import graphviz  # type: ignore
 
 import torch_split.logging as logging
-from torch_split.client import TorchSplitClient
 from torch_split.core.dominance import DominanceInformation, VirtualNodeId
 from torch_split.core.ir import TorchGraph
 
@@ -100,8 +99,8 @@ class PartitionProvider:
     # -----------------------------
     # Construction
     # -----------------------------
-    def __init__(self, split_interface: "TorchSplitClient"):
-        self._dominance = DominanceInformation(TorchGraph.from_client(split_interface))
+    def __init__(self, torch_graph: TorchGraph):
+        self._dominance = DominanceInformation(torch_graph)
 
     @property
     def torch_graph(self) -> TorchGraph:
@@ -175,11 +174,6 @@ class PartitionProvider:
                 self._dominance.name_of(a.partition.sink),
                 len(a.partition.total_enclosed_region),
             )
-
-        region_tree: dict[PartitionProvider.PartitionEval, list[PartitionProvider.PartitionEval]] = {}
-        parent_of: dict[PartitionProvider.PartitionEval, PartitionProvider.PartitionEval | None] = {}
-
-        stack: list[PartitionProvider.PartitionEval] = []
 
         # for p in accepted:
         #     # Pop until we find a region that subsumes this one
@@ -471,7 +465,9 @@ class PartitionProvider:
         )
 
     @logging.timer(name="Partition generation")
-    def _generate_all_partition_candidates(self) -> Iterable["PartitionProvider.PartitionEval"]:
+    def _generate_all_partition_candidates(
+        self,
+    ) -> Iterable["PartitionProvider.PartitionEval"]:
         logger.info(
             "[bold cyan]Starting partition generation[/] [dim]for graph with %d nodes[/]",
             len(list(self._dominance.nodes())),
@@ -484,7 +480,10 @@ class PartitionProvider:
 
         # look at dominance relationships to find a source and sink node that form a SESE region
         source_nodes = list(self._dominance.nodes())
-        logger.debug("[dim]Exploring %d potential source nodes for SESE regions[/]", len(source_nodes))
+        logger.debug(
+            "[dim]Exploring %d potential source nodes for SESE regions[/]",
+            len(source_nodes),
+        )
 
         if len(source_nodes) > 1000:
             logger.warning(
@@ -515,7 +514,8 @@ class PartitionProvider:
             # SESE regions contain of a source node that dominates a sink node
             # and the sink node post-dominates the source node
             candidate_pdom_uids = set.intersection(
-                set(self._dominance.nodes()), *(self._dominance.pdom[b] for b in successor_nodes)
+                set(self._dominance.nodes()),
+                *(self._dominance.pdom[b] for b in successor_nodes),
             )
             dominated_pdom_uids = set(filter(lambda n: source_node in self._dominance.dom[n], candidate_pdom_uids))
 
@@ -529,7 +529,11 @@ class PartitionProvider:
                 source_name = self._dominance.name_of(source_node)
                 sink_name = self._dominance.name_of(sink_node)
 
-                logger.debug("[cyan]Processing SESE[/]: [yellow]%s[/] -> [yellow]%s[/]", source_name, sink_name)
+                logger.debug(
+                    "[cyan]Processing SESE[/]: [yellow]%s[/] -> [yellow]%s[/]",
+                    source_name,
+                    sink_name,
+                )
                 partition = self._get_partition_from_cut(candidate_cut)
 
                 for idx, subgraph in enumerate(partition.subgraphs):

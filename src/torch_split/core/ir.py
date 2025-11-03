@@ -12,8 +12,8 @@ import torch.fx as fx
 from frozendict import frozendict
 
 import torch_split.logging as logging
-from torch_split.client import TorchSplitClient
-from torch_split.graph_utils import capture_graph
+from torch_split.client import SplitClient
+from torch_split.utils import capture_graph
 
 logger = logging.get_logger(__name__)
 
@@ -87,12 +87,36 @@ class TorchGraph:
             return node.node.name
 
     @staticmethod
-    def from_client(interface: TorchSplitClient, label: str = "root") -> "TorchGraph":
-        return TorchGraph.from_fx_graph(capture_graph(interface), label)
+    def from_client(client: SplitClient, label: str = "root") -> "TorchGraph":
+        return TorchGraph.from_fx_graph(capture_graph(client), label)
+
+    def annotate_with_profiling_data(self, profiling_data: dict):
+        """Annotate the graph nodes with profiling data."""
+        for uid, node in self.nodes.items():
+            if node_data := profiling_data.get(node.node.name, None):
+                node.node.meta["torch_split_profiling"] = node_data
+                logger.debug("Profiling data for node %s:", node.node.name)
+                for batch_size, batch_data in node_data.items():
+                    logger.debug(
+                        "   [dim]Node %s: Batch Size: %3d, Time: %5.2f (±) %5.2f ms| Mem: %7d (±) %7d B | Net: %7d (±) %d B[/]",
+                        node.node.name,
+                        int(batch_size),
+                        batch_data["avg_time_ms"],
+                        batch_data["std_time_ms"],
+                        batch_data["avg_peak_memory_usage_bytes"],
+                        batch_data["std_peak_memory_usage_bytes"],
+                        batch_data["avg_output_size_bytes"],
+                        batch_data["std_output_size_bytes"],
+                    )
+            else:
+                logger.warning("No profiling data found for node %s", node.node.name)
+
+                # parameters: frozendict[uuid.UUID, "Parameter | TorchGraph"]
+
+        pass
 
     @staticmethod
     def from_fx_graph(gm: fx.GraphModule, label: str = "root") -> "TorchGraph":
-        print(gm.graph)
         logger.info("[bold blue]Starting graph construction[/] for [cyan]%s[/]", label)
         graph = gm.graph
         # --- basic containers ---

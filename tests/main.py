@@ -3,11 +3,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-# from torch.distributed.pipeline.sync import Pipe
-from torch.distributed._pipeline.sync import Pipe
-
-from torch_split.client import TorchSplitClient
-from torch_split.core import partition
+from torch_split.client import InstrumentedModule, SplitClient
 
 
 def with_hint(x):
@@ -42,13 +38,13 @@ class SimpleCNN(nn.Module):
 
     def forward(self, x):
         # nonlocal state
-        # x = self.pool(torch.relu(self.conv1(x)))  # (16, 16, 16)
-        # x = self.pool(torch.relu(self.conv2(x)))  # (32, 8, 8)
-        # x = x.view(-1, 32 * 8 * 8)
-        # x = torch.relu(self.fc1(x))
-        # x = torch.relu(self.fc2(x))
-        # x = torch.relu(self.fc3(x))
-        return self.seq(x)
+        x = self.pool(torch.relu(self.conv1(x)))  # (16, 16, 16)
+        x = self.pool(torch.relu(self.conv2(x)))  # (32, 8, 8)
+        x = x.view(-1, 32 * 8 * 8)
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        return x
 
 
 class SimpleModel(nn.Module):
@@ -76,34 +72,39 @@ class Toy(nn.Module):
         return x
 
 
-# Google OR Tools
-
-
-class TestInterface(TorchSplitClient):
+class TestInterface(SplitClient):
     def __init__(self):
         super().__init__()
-        # self.model = Toy()
-        model = Pipe(
-            SimpleCNN,
-            num_stages == 2,
-        )
+        self.model = Toy()
+        self.model.to("cuda:0")
+        self.model.eval()
+        # self.model = Pipe(SimpleCNN, devices=[torch.device("cuda:0"), torch.device("cuda:1")], chunks=4)
 
     def get_model(self) -> torch.nn.Module:
         return self.model
 
-    def get_example_inputs(self) -> tuple[tuple[torch.Tensor, ...], dict[str, torch.Tensor]]:
-        example_input = torch.randn(1, 100)
+    def get_example_inputs(
+        self,
+    ) -> tuple[tuple[torch.Tensor, ...], dict[str, torch.Tensor]]:
+        example_input = torch.randn(1, 100).to("cuda:0")
         return (example_input,), {}
 
-    def target_device(self) -> torch.device:
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    def run_benchmark(self, module: InstrumentedModule):
+        for batch_size in [1, 8, 16, 32, 64]:
+            with module(batch_size) as m:
+                for _ in range(30):
+                    m.run(torch.randn(batch_size, 100).to("cuda:0"))
 
 
-export_path = Path("./.bin/toy")
-pp = partition.PartitionProvider(TestInterface())
-pp.visualize_dominance(export_path)
-pp.visualize_dataflow(export_path)
-pp.create_partition()
+# gm = capture_graph(TestInterface())
+# im = annotators.RuntimeAnnotator(gm)
+# im.run(torch.randn(1, 100).to("cuda:0"))
+
+# export_path = Path("./.bin/toy")
+# pp = partition.PartitionProvider(TestInterface())
+# pp.visualize_dominance(export_path)
+# pp.visualize_dataflow(export_path)
+# pp.create_partition()
 
 # interpreter = profiler.InstrumentedModel(TestInterface())
 # interpreter.run(torch.randn(1, 3, 32, 32))

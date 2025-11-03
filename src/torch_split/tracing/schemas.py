@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 import msgpack  # type: ignore
 from pydantic import BaseModel, Field, model_validator
 
-from torch_split.logging import get_logger
+from src.torch_split.logging.logging import get_logger
 
 logger = get_logger(__name__)
 

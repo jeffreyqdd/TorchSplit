@@ -14,8 +14,6 @@ def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
 
     if not logger.handlers:
-        logger.setLevel(logging.INFO)
-
         # logger should show time, but not the path to reduce clutter
         # name should give us more than enough information about the source
         handler = RichHandler(
@@ -36,6 +34,11 @@ def get_logger(name: str) -> logging.Logger:
 
     logger.name = name
     return logger
+
+
+def set_level(level: str):
+    """Set the logging level for the root logger."""
+    logging.basicConfig(level=getattr(logging, level.upper()))
 
 
 def timer(logger=None, name=None):

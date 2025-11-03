@@ -48,14 +48,22 @@ class DominanceInformation:
         reverse_pdom_tree = self.reverse_tree(pdom_tree)
 
         self.all_nodes = frozenset(all_nodes)
-        self.successors = frozendict({n: frozenset(succs) for n, succs in successors.items()})
-        self.predecessors = frozendict({n: frozenset(preds) for n, preds in predecessors.items()})
+        self.successors = frozendict(
+            {n: frozenset(succs) for n, succs in successors.items()}
+        )
+        self.predecessors = frozendict(
+            {n: frozenset(preds) for n, preds in predecessors.items()}
+        )
         self.dom = frozendict({n: frozenset(ds) for n, ds in dom.items()})
         self.pdom = frozendict({n: frozenset(ds) for n, ds in pdom.items()})
         self.dom_tree = frozendict({n: frozenset(cs) for n, cs in dom_tree.items()})
         self.pdom_tree = frozendict({n: frozenset(cs) for n, cs in pdom_tree.items()})
-        self.reverse_dom_tree = frozendict({n: frozenset(cs) for n, cs in reverse_dom_tree.items()})
-        self.reverse_pdom_tree = frozendict({n: frozenset(cs) for n, cs in reverse_pdom_tree.items()})
+        self.reverse_dom_tree = frozendict(
+            {n: frozenset(cs) for n, cs in reverse_dom_tree.items()}
+        )
+        self.reverse_pdom_tree = frozendict(
+            {n: frozenset(cs) for n, cs in reverse_pdom_tree.items()}
+        )
 
     # ---------- Public API ----------
 
@@ -93,7 +101,9 @@ class DominanceInformation:
             raise ValueError("Cannot unwrap entry/exit nodes to TorchGraph Uuids")
         return node.value
 
-    def safe_unwrap_iterable(self, nodes: Iterable[VirtualNodeId]) -> Iterable[uuid.UUID]:
+    def safe_unwrap_iterable(
+        self, nodes: Iterable[VirtualNodeId]
+    ) -> Iterable[uuid.UUID]:
         """Unwrap a set of DominanceUuids to a set of uuid.UUIDs; errors on entry/exit nodes."""
         return (self.safe_unwrap(n) for n in nodes)
 
@@ -111,7 +121,10 @@ class DominanceInformation:
     def build_successors(
         tg: TorchGraph, entry: VirtualNodeId, exit: VirtualNodeId
     ) -> Dict[VirtualNodeId, Set[VirtualNodeId]]:
-        core = {VirtualNodeId(uid): set(map(VirtualNodeId, tg.node_dataflow.get(uid, ()))) for uid in tg.nodes}
+        core = {
+            VirtualNodeId(uid): set(map(VirtualNodeId, tg.node_dataflow.get(uid, ())))
+            for uid in tg.nodes
+        }
 
         successors = {
             entry: set(map(VirtualNodeId, tg.inputs)),
@@ -129,7 +142,9 @@ class DominanceInformation:
         return DominanceInformation.reverse_tree(successors)
 
     @staticmethod
-    def reverse_tree(tree: Dict[VirtualNodeId, Set[VirtualNodeId]]) -> Dict[VirtualNodeId, Set[VirtualNodeId]]:
+    def reverse_tree(
+        tree: Dict[VirtualNodeId, Set[VirtualNodeId]],
+    ) -> Dict[VirtualNodeId, Set[VirtualNodeId]]:
         """
         Reverse adjacency (u -> v) becomes (v -> u).
         Ensures nodes that only appear as targets are present as keys.
@@ -161,7 +176,10 @@ class DominanceInformation:
             return {}
 
         # Initialize: root or nodes with no predecessors/successors start at {n}; others start at all_nodes.
-        dom = {n: ({n} if (n == root or not rel.get(n)) else set(all_nodes)) for n in all_nodes}
+        dom = {
+            n: ({n} if (n == root or not rel.get(n)) else set(all_nodes))
+            for n in all_nodes
+        }
 
         changed = True
         iteration = 0
@@ -192,14 +210,21 @@ class DominanceInformation:
         logger.debug("[dim]dominance: avg %.1f dominators per node[/]", avg)
 
         if iteration >= max_iterations:
-            logger.warning("[red]dominance computation hit iteration limit (%d)[/]", max_iterations)
+            logger.warning(
+                "[red]dominance computation hit iteration limit (%d)[/]", max_iterations
+            )
         else:
-            logger.info("[bold blue]dominance computation complete[/] [dim](%d iterations)[/]", iteration)
+            logger.info(
+                "[bold blue]dominance computation complete[/] [dim](%d iterations)[/]",
+                iteration,
+            )
 
         return dom
 
     @staticmethod
-    def build_dominance_tree(dsets: Dict[VirtualNodeId, Set[VirtualNodeId]]) -> Dict[VirtualNodeId, Set[VirtualNodeId]]:
+    def build_dominance_tree(
+        dsets: Dict[VirtualNodeId, Set[VirtualNodeId]],
+    ) -> Dict[VirtualNodeId, Set[VirtualNodeId]]:
         """
         Immediate dominator tree from full dominance sets:
         idom(n) = argmax_{d ∈ Dom(n) \ {n}} |Dom(d)|   (break ties arbitrarily).
@@ -227,7 +252,8 @@ class DominanceInformation:
 
     def render_graph(
         self,
-        tree: Dict[VirtualNodeId, Set[VirtualNodeId]] | frozendict[VirtualNodeId, frozenset[VirtualNodeId]],
+        tree: Dict[VirtualNodeId, Set[VirtualNodeId]]
+        | frozendict[VirtualNodeId, frozenset[VirtualNodeId]],
         graph: graphviz.Digraph,
         flatten: bool = False,
     ) -> None:
@@ -262,7 +288,9 @@ class DominanceInformation:
 
 
 def prune_unreachable(
-    successors: Dict[VirtualNodeId, Set[VirtualNodeId]], entry: VirtualNodeId, exit: VirtualNodeId
+    successors: Dict[VirtualNodeId, Set[VirtualNodeId]],
+    entry: VirtualNodeId,
+    exit: VirtualNodeId,
 ) -> Dict[VirtualNodeId, Set[VirtualNodeId]]:
     """
     Remove any nodes not reachable from ENTRY (forward) or
@@ -299,6 +327,10 @@ def prune_unreachable(
     valid_nodes = reachable_from_entry & reachable_to_exit
 
     # --------- 4️⃣ Rebuild pruned adjacency ----------
-    pruned = {u: {v for v in outs if v in valid_nodes} for u, outs in successors.items() if u in valid_nodes}
+    pruned = {
+        u: {v for v in outs if v in valid_nodes}
+        for u, outs in successors.items()
+        if u in valid_nodes
+    }
 
     return pruned
