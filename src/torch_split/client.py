@@ -130,6 +130,12 @@ class InstrumentedModule(fx.Interpreter):
                     "std_time_ms": float(time_std),
                     "std_output_size_bytes": float(output_size_std),
                     "std_peak_memory_usage_bytes": float(peak_memory_std),
+                    "min_time_ms": min(profiler_result.time_ms),
+                    "max_time_ms": max(profiler_result.time_ms),
+                    "min_output_size_bytes": min(profiler_result.output_size_bytes),
+                    "max_output_size_bytes": max(profiler_result.output_size_bytes),
+                    "min_peak_memory_usage_bytes": min(profiler_result.peak_memory_usage_bytes),
+                    "max_peak_memory_usage_bytes": max(profiler_result.peak_memory_usage_bytes),
                 }
 
             self._summary[node.name] = batch_size_stats
@@ -137,7 +143,6 @@ class InstrumentedModule(fx.Interpreter):
     ### device profiling hooks
     def _cuda_start_hook(self, device: torch.device):
         torch.cuda.synchronize()
-        torch.cuda.reset_peak_memory_stats(device)
         self._cuda_start_event = torch.cuda.Event(enable_timing=True)
         self._cuda_end_event = torch.cuda.Event(enable_timing=True)
 

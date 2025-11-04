@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
+import torch_split.utils as utils
 from torch_split.client import InstrumentedModule, SplitClient
 
 
@@ -76,9 +77,6 @@ class TestInterface(SplitClient):
     def __init__(self):
         super().__init__()
         self.model = Toy()
-        self.model.to("cuda:0")
-        self.model.eval()
-        # self.model = Pipe(SimpleCNN, devices=[torch.device("cuda:0"), torch.device("cuda:1")], chunks=4)
 
     def get_model(self) -> torch.nn.Module:
         return self.model
@@ -86,7 +84,7 @@ class TestInterface(SplitClient):
     def get_example_inputs(
         self,
     ) -> tuple[tuple[torch.Tensor, ...], dict[str, torch.Tensor]]:
-        example_input = torch.randn(1, 100).to("cuda:0")
+        example_input = torch.randn(1, 100)
         return (example_input,), {}
 
     def run_benchmark(self, module: InstrumentedModule):
@@ -96,6 +94,8 @@ class TestInterface(SplitClient):
                     m.run(torch.randn(batch_size, 100).to("cuda:0"))
 
 
+x = utils.capture_graph2(TestInterface())
+print(x)
 # gm = capture_graph(TestInterface())
 # im = annotators.RuntimeAnnotator(gm)
 # im.run(torch.randn(1, 100).to("cuda:0"))

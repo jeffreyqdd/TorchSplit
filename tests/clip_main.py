@@ -32,20 +32,20 @@ class TestInterface(SplitClient):
         model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         model.eval()
 
-        self.model = CLIPFullWrapper(model).to("cuda:0")
+        self.model = CLIPFullWrapper(model)  # .to("cuda:0")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
     def get_model(self) -> torch.nn.Module:
         return self.model
 
     def get_example_inputs(self) -> tuple[tuple[torch.Tensor, ...], dict[str, torch.Tensor]]:
-        img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(16)]
-        texts = ["a plain white square" for _ in range(16)]
+        img = Image.new("RGB", (224, 224), color=(255, 255, 255))  # for _ in range(16)
+        texts = "a plain white square"  # for _ in range(16)#]
 
         enc = self.processor(images=img, text=texts, return_tensors="pt", padding=True)  # type: ignore
-        pixel_values = enc["pixel_values"].to("cuda:0")
-        input_ids = enc["input_ids"].to("cuda:0")
-        attention_mask = enc["attention_mask"].to("cuda:0")
+        pixel_values = enc["pixel_values"]  # .to("cuda:0")
+        input_ids = enc["input_ids"]  # .to("cuda:0")
+        attention_mask = enc["attention_mask"]  # .to("cuda:0")
 
         return (pixel_values, input_ids, attention_mask), {}
 
@@ -64,9 +64,9 @@ class TestInterface(SplitClient):
 
                 # Process inputs
                 enc = self.processor(images=imgs, text=texts, return_tensors="pt", padding=True)  # type: ignore
-                pixel_values = enc["pixel_values"].to(device)
-                input_ids = enc["input_ids"].to(device)
-                attention_mask = enc["attention_mask"].to(device)
+                pixel_values = enc["pixel_values"]  # .to(device)
+                input_ids = enc["input_ids"]  # .to(device)
+                attention_mask = enc["attention_mask"]  # .to(device)
 
                 # Run multiple iterations for stable measurements
                 for _ in range(128):  # 10 warmup + measurement runs
