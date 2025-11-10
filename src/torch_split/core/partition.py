@@ -76,9 +76,7 @@ class PartitionProvider:
 
         def __post_init__(self):
             if bool(self.source) != bool(self.sink):
-                raise ValueError(
-                    "Both source and sink must be None or both must be non-None"
-                )
+                raise ValueError("Both source and sink must be None or both must be non-None")
 
     @dataclass(frozen=True)
     class PartitionCandidate:
@@ -149,9 +147,7 @@ class PartitionProvider:
 
         rev_pdom_tree_gv = graphviz.Digraph(name="Reverse Post Dominance Tree")
         rev_pdom_tree_gv.attr(nodesep="0.1", ranksep="0.3")
-        self._dominance.render_graph(
-            self._dominance.reverse_pdom_tree, rev_pdom_tree_gv
-        )
+        self._dominance.render_graph(self._dominance.reverse_pdom_tree, rev_pdom_tree_gv)
         rev_pdom_tree_gv.render(export_path / "rev_post_dominance_tree", format="pdf")
 
     def create_partition(
@@ -175,32 +171,33 @@ class PartitionProvider:
         # outline: enumerate -> eval -> prune (invalid/subsumed/intersecting) -> pack into ≤ gpu_budget -> rank
 
         # only consider candidates that meet the minimum compute share
-        partition_candidates = filter(
-            lambda pc: self._highest_empirical_weight(
-                pc.execution_time_ms, entire_graph_execution_time, 0
+        partition_candidates = list(
+            filter(
+                lambda pc: self._highest_empirical_weight(pc.execution_time_ms, entire_graph_execution_time, 0) >= 0,
+                self._generate_all_partition_candidates(),
             )
-            >= 0,
-            self._generate_all_partition_candidates(),
         )
 
         # sort, prioritizing highest compute share
         partition_candidates = sorted(
             partition_candidates,
-            key=lambda pc: -self._highest_empirical_weight(
-                pc.execution_time_ms, entire_graph_execution_time, 0
-            ),
+            key=lambda pc: -self._highest_empirical_weight(pc.execution_time_ms, entire_graph_execution_time, 0),
         )
 
         # prune intersecting candidates
         accepted: list["PartitionProvider.PartitionCandidate"] = []
         for p in partition_candidates:
-            # if not any(
-            #     self.intersects(p.partition, a.partition)
-            #     and not self.subsumes(p.partition, a.partition)
-            #     for a in accepted
-            # ):
-            accepted.append(p)
+            fraction = self._highest_empirical_weight(p.execution_time_ms, entire_graph_execution_time, 0)
+            if fraction < min_compute_share:
+                continue
 
+            if not any(
+                self.intersects(p.partition, a.partition) and not self.subsumes(p.partition, a.partition)
+                for a in accepted
+            ):
+                accepted.append(p)
+
+        logger.info("Selected %d partitions after pruning", len(accepted))
         for a in accepted:
             logger.debug(
                 "Accepted partition %s %s wth %d subgraphs, with %d nodes | compute share: %f%%",
@@ -208,12 +205,21 @@ class PartitionProvider:
                 self._dominance.name_of(a.partition.sink),
                 len(a.partition.subgraphs),
                 len(a.partition.total_enclosed_region),
-                self._highest_empirical_weight(
-                    a.execution_time_ms, entire_graph_execution_time, 0
-                ),
+                self._highest_empirical_weight(a.execution_time_ms, entire_graph_execution_time, 0),
             )
-        #     print(a.execution_time_ms)
 
+        for p in accepted:
+            logger.debug(
+                "Partition %s %s | %d nodes",
+                self._dominance.name_of(p.partition.source),
+                self._dominance.name_of(p.partition.sink),
+                len(p.partition.total_enclosed_region),
+            )
+
+        # parent_of = {}
+        # parent = {}
+        # region_tree = {}
+        # stack = []
         # for p in accepted:
         #     # Pop until we find a region that subsumes this one
         #     while stack and not self.subsumes(stack[-1].partition, p.partition):
@@ -230,16 +236,15 @@ class PartitionProvider:
         #     stack.append(p)
 
         # # Step 3: Optionally log the resulting hierarchy
-        # def _log_tree(node: PartitionProvider.PartitionEval | None, depth: int = 0):
+        # def _log_tree(node, depth: int = 0):
         #     for child in region_tree.get(node, []):
         #         indent = "  " * depth
         #         logger.info(
-        #             "%sRegion %s→%s | %d nodes | %.2f MFLOPs",
+        #             "%sRegion %s→%s | %d nodes",
         #             indent,
         #             self._dominance.name_of(child.partition.source),
         #             self._dominance.name_of(child.partition.sink),
         #             len(child.partition.total_enclosed_region),
-        #             child.flops / 1e6,
         #         )
         #         _log_tree(child, depth + 1)
 
@@ -268,18 +273,15 @@ class PartitionProvider:
         total: frozendict[int, tuple[float, float]],
         zscore: float,
     ) -> float:
-        assert partition.keys() == total.keys(), (
-            "Partition and total must have the same batch sizes"
-        )
+        assert partition.keys() == total.keys(), "Partition and total must have the same batch sizes"
 
-        best = 0
+        best = 0.0
         for batch_size in partition.keys():
             part_avg, part_std = partition[batch_size]
             total_avg, total_std = total[batch_size]
             best = max(
                 best,
-                (part_avg + part_std * zscore)
-                / max(total_avg - total_std * zscore, 1e-8),
+                (part_avg + part_std * zscore) / max(total_avg - total_std * zscore, 1e-8),
             )
 
         return best
@@ -345,9 +347,7 @@ class PartitionProvider:
         return True
 
     @lru_cache(maxsize=16384)
-    def enclosed_region(
-        self, sese: "PartitionProvider.Cut"
-    ) -> frozenset[VirtualNodeId]:
+    def enclosed_region(self, sese: "PartitionProvider.Cut") -> frozenset[VirtualNodeId]:
         """return the set of nodes enclosed by the single-entry-single-exit region, excluding the source and sink nodes"""
 
         if not self.valid_cut(sese):
@@ -370,31 +370,23 @@ class PartitionProvider:
         return frozenset(reachable)
 
     @lru_cache(maxsize=16384)
-    def subsumes(
-        self, a: "PartitionProvider.Partition", b: "PartitionProvider.Partition"
-    ) -> bool:
+    def subsumes(self, a: "PartitionProvider.Partition", b: "PartitionProvider.Partition") -> bool:
         """returns true if b's region is a subset of a's region"""
         return b.total_enclosed_region <= a.total_enclosed_region
 
     @lru_cache(maxsize=16384)
-    def intersects(
-        self, a: "PartitionProvider.Partition", b: "PartitionProvider.Partition"
-    ) -> bool:
+    def intersects(self, a: "PartitionProvider.Partition", b: "PartitionProvider.Partition") -> bool:
         """returns true if regions overlap, but neither subsumes the other"""
         not_empty = len(a.total_enclosed_region & b.total_enclosed_region) != 0
         return not_empty and not self.subsumes(a, b) and not self.subsumes(b, a)
 
     @lru_cache(maxsize=16384)
-    def is_disjoint(
-        self, a: "PartitionProvider.Partition", b: "PartitionProvider.Partition"
-    ) -> bool:
+    def is_disjoint(self, a: "PartitionProvider.Partition", b: "PartitionProvider.Partition") -> bool:
         """Regions are disjoint (safe to co-exist)."""
         return len(a.total_enclosed_region & b.total_enclosed_region) == 0
 
     @lru_cache(maxsize=16384)
-    def total_execution_time(
-        self, partition: "PartitionProvider.Partition"
-    ) -> frozendict[int, tuple[float, float]]:
+    def total_execution_time(self, partition: "PartitionProvider.Partition") -> frozendict[int, tuple[float, float]]:
         """Estimate total execution time of a partition by summing subgraph times.
 
         Args:
@@ -409,18 +401,14 @@ class PartitionProvider:
         for subgraph in partition.subgraphs:
             for node_uid in subgraph.enclosed_region:
                 node = self.torch_graph.node_from_uid(node_uid)
-                for batch_size, batch_metrics in node.node.meta[
-                    "torch_split_profiling"
-                ].items():
+                for batch_size, batch_metrics in node.node.meta["torch_split_profiling"].items():
                     ret[int(batch_size)][0] += batch_metrics["avg_time_ms"]
                     ret[int(batch_size)][1] += batch_metrics["std_time_ms"] ** 2
 
         return frozendict({k: (v[0], v[1] ** 0.5) for k, v in ret.items()})
 
     @lru_cache(maxsize=16384)
-    def maximum_memory_usage(
-        self, partition: "PartitionProvider.Partition"
-    ) -> tuple[float, float]:
+    def maximum_memory_usage(self, partition: "PartitionProvider.Partition") -> tuple[float, float]:
         """Estimate maximum memory usage of a partition by taking a maximum across nodes in the partition
 
         Args:
@@ -436,12 +424,8 @@ class PartitionProvider:
         for subgraph in partition.subgraphs:
             for node_uid in subgraph.enclosed_region:
                 node = self.torch_graph.node_from_uid(node_uid)
-                node_avg_mem = node.node.meta["torch_split_profiling"][
-                    "avg_memory_bytes"
-                ]
-                node_std_mem = node.node.meta["torch_split_profiling"][
-                    "std_memory_bytes"
-                ]
+                node_avg_mem = node.node.meta["torch_split_profiling"]["avg_memory_bytes"]
+                node_std_mem = node.node.meta["torch_split_profiling"]["std_memory_bytes"]
 
                 max_avg_memory_bytes = max(node_avg_mem, max_avg_memory_bytes)
                 max_std_memory_bytes = max(node_std_mem, max_std_memory_bytes)
@@ -461,9 +445,7 @@ class PartitionProvider:
         total_size = 0.0
         for node_uid in node_uids:
             node = self.torch_graph.node_from_uid(node_uid)
-            total_size += node.node.meta["torch_split_profiling"][
-                "max_output_size_bytes"
-            ]
+            total_size += node.node.meta["torch_split_profiling"]["max_output_size_bytes"]
         return total_size
 
     def network_traffic(self, partition: "PartitionProvider.Partition") -> float:
@@ -486,17 +468,13 @@ class PartitionProvider:
     # Selection / ranking
     # -----------------------------
 
-    def _get_partition_from_cut(
-        self, cut: "PartitionProvider.Cut"
-    ) -> "PartitionProvider.Partition":
+    def _get_partition_from_cut(self, cut: "PartitionProvider.Cut") -> "PartitionProvider.Partition":
         if not self.valid_cut(cut):
             raise ValueError("Cannot create cut from invalid SESE")
 
         # get all nodes in the enclosed region, excluding the source and sink nodes
         enclosed_region = self.enclosed_region(cut)
-        logger.debug(
-            "[dim]Analyzing enclosed region with %d nodes[/]", len(enclosed_region)
-        )
+        logger.debug("[dim]Analyzing enclosed region with %d nodes[/]", len(enclosed_region))
 
         # create an undirected graph of the enclosed region
         undirected_graph: dict[VirtualNodeId, set[VirtualNodeId]] = defaultdict(set)
@@ -530,12 +508,8 @@ class PartitionProvider:
 
         subcomponents: set[PartitionProvider.Partition.Subgraph] = set()
         for subgraph in subgraphs:
-            input_uids = self._dominance.safe_unwrap_iterable(
-                self._find_component_inputs(subgraph)
-            )
-            output_uids = self._dominance.safe_unwrap_iterable(
-                self._find_component_outputs(subgraph)
-            )
+            input_uids = self._dominance.safe_unwrap_iterable(self._find_component_inputs(subgraph))
+            output_uids = self._dominance.safe_unwrap_iterable(self._find_component_outputs(subgraph))
             subcomponents.add(
                 PartitionProvider.Partition.Subgraph(
                     frozenset(input_uids),
@@ -546,9 +520,7 @@ class PartitionProvider:
 
         return PartitionProvider.Partition(cut, frozenset(subcomponents))
 
-    def _find_component_inputs(
-        self, subgraph_nodes: Set[VirtualNodeId]
-    ) -> frozenset[VirtualNodeId]:
+    def _find_component_inputs(self, subgraph_nodes: Set[VirtualNodeId]) -> frozenset[VirtualNodeId]:
         """Find nodes in component with no incoming edges from within the component."""
 
         # inputs have no in edges, meaning no predecessors in the subgraph
@@ -560,9 +532,7 @@ class PartitionProvider:
 
         return frozenset(inputs)
 
-    def _find_component_outputs(
-        self, component_nodes: set[VirtualNodeId]
-    ) -> frozenset[VirtualNodeId]:
+    def _find_component_outputs(self, component_nodes: set[VirtualNodeId]) -> frozenset[VirtualNodeId]:
         """Find nodes in component with no outgoing edges within the component."""
 
         # outputs have no out edges, meaning no successors in the subgraph
@@ -574,9 +544,7 @@ class PartitionProvider:
 
         return frozenset(outputs)
 
-    def _evaluate_partition(
-        self, partition: "PartitionProvider.Partition"
-    ) -> "PartitionProvider.PartitionCandidate":
+    def _evaluate_partition(self, partition: "PartitionProvider.Partition") -> "PartitionProvider.PartitionCandidate":
         """Evaluate a partition to compute metrics like bytes_in, bytes_out, flops, and peak_mem_bytes."""
 
         # TODO (jq54): implement accurate computation of these metrics from traces
@@ -626,10 +594,7 @@ class PartitionProvider:
                 continue
 
             # Log progress for large graphs
-            if (
-                len(source_nodes) > 100
-                and processed_sources % max(1, len(source_nodes) // 10) == 0
-            ):
+            if len(source_nodes) > 100 and processed_sources % max(1, len(source_nodes) // 10) == 0:
                 logger.debug(
                     "[cyan]Progress[/]: %d/%d source nodes processed [dim](%.1f%%)[/]",
                     processed_sources,
@@ -647,11 +612,7 @@ class PartitionProvider:
                 set(self._dominance.nodes()),
                 *(self._dominance.pdom[b] for b in successor_nodes),
             )
-            dominated_pdom_uids = set(
-                filter(
-                    lambda n: source_node in self._dominance.dom[n], candidate_pdom_uids
-                )
-            )
+            dominated_pdom_uids = set(filter(lambda n: source_node in self._dominance.dom[n], candidate_pdom_uids))
 
             for sink_node in dominated_pdom_uids:
                 total_cut_count += 1
@@ -671,20 +632,12 @@ class PartitionProvider:
                 partition = self._get_partition_from_cut(candidate_cut)
 
                 for idx, subgraph in enumerate(partition.subgraphs):
-                    input_names = [
-                        self.torch_graph.name_from_uid(uid) for uid in subgraph.inputs
-                    ]
-                    output_names = [
-                        self.torch_graph.name_from_uid(uid) for uid in subgraph.outputs
-                    ]
+                    input_names = [self.torch_graph.name_from_uid(uid) for uid in subgraph.inputs]
+                    output_names = [self.torch_graph.name_from_uid(uid) for uid in subgraph.outputs]
 
                     # Format names with truncation for readability
-                    inputs_display = ", ".join(input_names[:3]) + (
-                        "..." if len(input_names) > 3 else ""
-                    )
-                    outputs_display = ", ".join(output_names[:3]) + (
-                        "..." if len(output_names) > 3 else ""
-                    )
+                    inputs_display = ", ".join(input_names[:3]) + ("..." if len(input_names) > 3 else "")
+                    outputs_display = ", ".join(output_names[:3]) + ("..." if len(output_names) > 3 else "")
 
                     logger.debug(
                         "  [green]Subgraph %d[/]: [blue]inputs[/]=[cyan]%s[/], [magenta]outputs[/]=[cyan]%s[/] [dim](%d nodes)[/]",
@@ -721,9 +674,7 @@ class PartitionProvider:
             "[dim]LRU Cache Stats - enclosed_region: hits=%d, misses=%d, hit_rate=%.1f%%, size=%d[/]",
             enclosed_region_info.hits,
             enclosed_region_info.misses,
-            100.0
-            * enclosed_region_info.hits
-            / (enclosed_region_info.hits + enclosed_region_info.misses)
+            100.0 * enclosed_region_info.hits / (enclosed_region_info.hits + enclosed_region_info.misses)
             if (enclosed_region_info.hits + enclosed_region_info.misses) > 0
             else 0.0,
             enclosed_region_info.currsize,

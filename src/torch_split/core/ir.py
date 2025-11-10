@@ -22,6 +22,9 @@ cond_mod = importlib.import_module("torch._higher_order_ops.cond")
 
 def _flatten_arguments(items) -> Iterable:
     """Flatten nested arguments into a single iterable."""
+    if isinstance(items, fx.Node):
+        items = [items]
+
     for item in items:
         if isinstance(item, Iterable) and not isinstance(item, (str, bytes)):
             for sub in _flatten_arguments(item):
@@ -90,24 +93,13 @@ class TorchGraph:
     def from_client(client: SplitClient, label: str = "root") -> "TorchGraph":
         return TorchGraph.from_fx_graph(capture_graph(client), label)
 
-    def annotate_with_profiling_data(self, profiling_data: dict):
+    def annotate_with_profiling_data(self, batch_size: int, profiling_data: dict):
         """Annotate the graph nodes with profiling data."""
-        for uid, node in self.nodes.items():
+        for _, node in self.nodes.items():
             if node_data := profiling_data.get(node.node.name, None):
-                node.node.meta["torch_split_profiling"] = node_data
-                logger.debug("Profiling data for node %s:", node.node.name)
-                for batch_size, batch_data in node_data.items():
-                    logger.debug(
-                        "   [dim]Node %s: Batch Size: %3d, Time: %5.2f (±) %5.2f ms| Mem: %7d (±) %7d B | Net: %7d (±) %d B[/]",
-                        node.node.name,
-                        int(batch_size),
-                        batch_data["avg_time_ms"],
-                        batch_data["std_time_ms"],
-                        batch_data["avg_peak_memory_usage_bytes"],
-                        batch_data["std_peak_memory_usage_bytes"],
-                        batch_data["avg_output_size_bytes"],
-                        batch_data["std_output_size_bytes"],
-                    )
+                if not hasattr(node.node.meta, "torch_split_profiling"):
+                    node.node.meta["torch_split_profiling"] = {}
+                node.node.meta["torch_split_profiling"][batch_size] = node_data
             else:
                 logger.error("No profiling data found for node %s", node.node.name)
                 raise RuntimeError(f"No profiling data for node {node.node.name}")
@@ -124,12 +116,8 @@ class TorchGraph:
 
         # --- dataflow edges ---
         graph_node_dataflow: defaultdict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
-        graph_reverse_node_dataflow: defaultdict[uuid.UUID, set[uuid.UUID]] = (
-            defaultdict(set)
-        )
-        graph_parameter_dataflow: defaultdict[uuid.UUID, set[uuid.UUID]] = defaultdict(
-            set
-        )
+        graph_reverse_node_dataflow: defaultdict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
+        graph_parameter_dataflow: defaultdict[uuid.UUID, set[uuid.UUID]] = defaultdict(set)
 
         # --- inputs and outputs ---
         graph_inputs: set[uuid.UUID] = set()
@@ -141,7 +129,6 @@ class TorchGraph:
         for node_idx, node in enumerate(graph.nodes, 1):
             if not isinstance(node, fx.Node):
                 raise TypeError("Expected fx.Node")
-
             if node.op == "placeholder":
                 # represents a function input
                 #   - name      : value to assign to
@@ -186,9 +173,7 @@ class TorchGraph:
                     new_uuid = uuid.uuid4()
                     graph_parameter_uid[node.name] = new_uuid
                     graph_parameters[new_uuid] = subgraph_node
-                    logger.debug(
-                        "  [dim]Added parameter with UUID: %s[/]", str(new_uuid)[:8]
-                    )
+                    logger.debug("  [dim]Added parameter with UUID: %s[/]", str(new_uuid)[:8])
 
                 elif isinstance(attribute, torch.Tensor):
                     # node.name is the variable to assign to
@@ -202,17 +187,11 @@ class TorchGraph:
                     )
                     new_uuid = uuid.uuid4()
                     graph_parameter_uid[node.name] = new_uuid
-                    graph_parameters[new_uuid] = TorchGraph.Parameter(
-                        node.target, attribute
-                    )
-                    logger.debug(
-                        "  [dim]Added parameter with UUID: %s[/]", str(new_uuid)[:8]
-                    )
+                    graph_parameters[new_uuid] = TorchGraph.Parameter(node.target, attribute)
+                    logger.debug("  [dim]Added parameter with UUID: %s[/]", str(new_uuid)[:8])
                 else:
                     raise TypeError(f"unhandled attribute type: {type(attribute)}")
-            elif node.op == "call_function" and isinstance(
-                node.target, cond_mod.CondOp
-            ):
+            elif node.op == "call_function" and isinstance(node.target, cond_mod.CondOp):
                 # only look at args[0] which contains data dependencies; the other should be handled by get_attr
                 logger.debug(
                     "[bold blue]CALL_FUNCTION[/] [%d/%d] cond → %s",
@@ -225,9 +204,7 @@ class TorchGraph:
                 graph_nodes[current_node_uid] = TorchGraph.Node(node, is_phi=True)
                 for data_source in _flatten_arguments(node.args):
                     if not isinstance(data_source, fx.Node):
-                        logger.debug(
-                            "  [dim]ignoring non-node argument: %s[/]", data_source
-                        )
+                        logger.debug("  [dim]ignoring non-node argument: %s[/]", data_source)
                         continue
                     if source_node_uid := graph_node_uid.get(data_source.name, None):
                         # source (node) => dest (call function node)
@@ -236,21 +213,15 @@ class TorchGraph:
                             data_source.name,
                         )
                         graph_node_dataflow[source_node_uid].add(current_node_uid)
-                        graph_reverse_node_dataflow[current_node_uid].add(
-                            source_node_uid
-                        )
-                    elif source_parameter_uid := graph_parameter_uid.get(
-                        data_source.name, None
-                    ):
+                        graph_reverse_node_dataflow[current_node_uid].add(source_node_uid)
+                    elif source_parameter_uid := graph_parameter_uid.get(data_source.name, None):
                         # source (parameter) => dest (call function node)
                         logger.debug(
                             "    [blue]→[/] connecting parameter [cyan]%s[/]",
                             data_source.name,
                         )
                         source_parameter_uid = graph_parameter_uid[data_source.name]
-                        graph_parameter_dataflow[source_parameter_uid].add(
-                            current_node_uid
-                        )
+                        graph_parameter_dataflow[source_parameter_uid].add(current_node_uid)
                     else:
                         raise RuntimeError(f"data source {data_source.name} not found")
             elif node.op == "call_function":
@@ -272,13 +243,9 @@ class TorchGraph:
                 graph_node_uid[node.name] = current_node_uid
                 graph_nodes[current_node_uid] = TorchGraph.Node(node)
 
-                for data_source in _flatten_arguments(
-                    node.args + tuple(node.kwargs.values())
-                ):
+                for data_source in _flatten_arguments(node.args + tuple(node.kwargs.values())):
                     if not isinstance(data_source, fx.Node):
-                        logger.debug(
-                            "  [dim]ignoring non-node argument: %s[/]", data_source
-                        )
+                        logger.debug("  [dim]ignoring non-node argument: %s[/]", data_source)
                         continue
 
                     if source_node_uid := graph_node_uid.get(data_source.name, None):
@@ -288,21 +255,15 @@ class TorchGraph:
                             data_source.name,
                         )
                         graph_node_dataflow[source_node_uid].add(current_node_uid)
-                        graph_reverse_node_dataflow[current_node_uid].add(
-                            source_node_uid
-                        )
-                    elif source_parameter_uid := graph_parameter_uid.get(
-                        data_source.name, None
-                    ):
+                        graph_reverse_node_dataflow[current_node_uid].add(source_node_uid)
+                    elif source_parameter_uid := graph_parameter_uid.get(data_source.name, None):
                         # source (parameter) => dest (call function node)
                         logger.debug(
                             "    [blue]→[/] connecting parameter [cyan]%s[/]",
                             data_source.name,
                         )
                         source_parameter_uid = graph_parameter_uid[data_source.name]
-                        graph_parameter_dataflow[source_parameter_uid].add(
-                            current_node_uid
-                        )
+                        graph_parameter_dataflow[source_parameter_uid].add(current_node_uid)
                     else:
                         raise RuntimeError(f"data source {data_source.name} not found")
 
@@ -329,9 +290,7 @@ class TorchGraph:
                     node.target,
                     node.name,
                 )
-                for data_source in _flatten_arguments(
-                    node.args + tuple(node.kwargs.values())
-                ):
+                for data_source in _flatten_arguments(node.args + tuple(node.kwargs.values())):
                     if not isinstance(data_source, fx.Node):
                         # there is no data dependency on this argument
                         continue
@@ -342,21 +301,15 @@ class TorchGraph:
                             data_source.name,
                         )
                         graph_node_dataflow[source_node_uid].add(current_node_uid)
-                        graph_reverse_node_dataflow[current_node_uid].add(
-                            source_node_uid
-                        )
-                    elif source_parameter_uid := graph_parameter_uid.get(
-                        data_source.name, None
-                    ):
+                        graph_reverse_node_dataflow[current_node_uid].add(source_node_uid)
+                    elif source_parameter_uid := graph_parameter_uid.get(data_source.name, None):
                         # source (parameter) => dest (call module node)
                         logger.debug(
                             "    [blue]→[/] connecting parameter [cyan]%s[/]",
                             data_source.name,
                         )
                         source_parameter_uid = graph_parameter_uid[data_source.name]
-                        graph_parameter_dataflow[source_parameter_uid].add(
-                            current_node_uid
-                        )
+                        graph_parameter_dataflow[source_parameter_uid].add(current_node_uid)
                     else:
                         raise RuntimeError(f"data source {data_source.name} not found")
             elif node.op == "call_method":
@@ -377,9 +330,7 @@ class TorchGraph:
                 current_node_uid = uuid.uuid4()
                 graph_node_uid[node.name] = current_node_uid
                 graph_nodes[current_node_uid] = TorchGraph.Node(node)
-                for data_source in _flatten_arguments(
-                    node.args + tuple(node.kwargs.values())
-                ):
+                for data_source in _flatten_arguments(node.args + tuple(node.kwargs.values())):
                     if not isinstance(data_source, fx.Node):
                         # there is no data dependency on this argument
                         continue
@@ -390,21 +341,15 @@ class TorchGraph:
                             data_source.name,
                         )
                         graph_node_dataflow[source_node_uid].add(current_node_uid)
-                        graph_reverse_node_dataflow[current_node_uid].add(
-                            source_node_uid
-                        )
-                    elif source_parameter_uid := graph_parameter_uid.get(
-                        data_source.name, None
-                    ):
+                        graph_reverse_node_dataflow[current_node_uid].add(source_node_uid)
+                    elif source_parameter_uid := graph_parameter_uid.get(data_source.name, None):
                         # source (parameter) => dest (call method node)
                         logger.debug(
                             "    [blue]→[/] connecting parameter [cyan]%s[/]",
                             data_source.name,
                         )
                         source_parameter_uid = graph_parameter_uid[data_source.name]
-                        graph_parameter_dataflow[source_parameter_uid].add(
-                            current_node_uid
-                        )
+                        graph_parameter_dataflow[source_parameter_uid].add(current_node_uid)
                     else:
                         raise RuntimeError(f"data source {data_source.name} not found")
             elif node.op == "output":
@@ -423,19 +368,13 @@ class TorchGraph:
                     if source_node_uid := graph_node_uid.get(output_source.name, None):
                         # logger.debug("    [green]→[/] connecting output [cyan]%s[/]", output_source.name)
                         graph_node_dataflow[source_node_uid].add(current_node_uid)
-                        graph_reverse_node_dataflow[current_node_uid].add(
-                            source_node_uid
-                        )
+                        graph_reverse_node_dataflow[current_node_uid].add(source_node_uid)
                         graph_outputs.add(source_node_uid)
                         graph_return_node = current_node_uid
                     else:
-                        raise RuntimeError(
-                            f"data source {output_source.name} not found"
-                        )
+                        raise RuntimeError(f"data source {output_source.name} not found")
             else:
-                raise RuntimeError(
-                    f"unmatched op: {node.op} of target type {type(node.target)}"
-                )
+                raise RuntimeError(f"unmatched op: {node.op} of target type {type(node.target)}")
 
         logger.info("[bold blue]Graph construction complete[/] for [cyan]%s[/]", label)
         logger.debug(
@@ -453,15 +392,9 @@ class TorchGraph:
             trace=gm,
             parameters=frozendict(graph_parameters),
             nodes=frozendict(graph_nodes),
-            node_dataflow=frozendict(
-                {k: frozenset(v) for k, v in graph_node_dataflow.items()}
-            ),
-            reverse_node_dataflow=frozendict(
-                {k: frozenset(v) for k, v in graph_reverse_node_dataflow.items()}
-            ),
-            parameter_dataflow=frozendict(
-                {k: frozenset(v) for k, v in graph_parameter_dataflow.items()}
-            ),
+            node_dataflow=frozendict({k: frozenset(v) for k, v in graph_node_dataflow.items()}),
+            reverse_node_dataflow=frozendict({k: frozenset(v) for k, v in graph_reverse_node_dataflow.items()}),
+            parameter_dataflow=frozendict({k: frozenset(v) for k, v in graph_parameter_dataflow.items()}),
             inputs=frozenset(graph_inputs),
             outputs=frozenset(graph_outputs),
             return_node=graph_return_node,
@@ -492,9 +425,7 @@ class TorchGraph:
             shape = "box"
             label = node.node.name
 
-            graph.node(
-                str(uid), label=label, shape=shape, style=style, fillcolor=fillcolor
-            )
+            graph.node(str(uid), label=label, shape=shape, style=style, fillcolor=fillcolor)
 
         if include_parameters:
             for uid, parameter in self.parameters.items():
@@ -542,17 +473,13 @@ class TorchGraph:
 
     def _get_execution_order(self) -> list[uuid.UUID]:
         """Get a possible execution order of the nodes using a topological sort."""
-        in_degree: dict[uuid.UUID, int] = {
-            node_uid: 0 for node_uid in self.nodes.keys()
-        }
+        in_degree: dict[uuid.UUID, int] = {node_uid: 0 for node_uid in self.nodes.keys()}
 
         for _, dests in self.node_dataflow.items():
             for dest in dests:
                 in_degree[dest] += 1
 
-        zero_in_degree = [
-            node_uid for node_uid, degree in in_degree.items() if degree == 0
-        ]
+        zero_in_degree = [node_uid for node_uid, degree in in_degree.items() if degree == 0]
         execution_order: list[uuid.UUID] = []
 
         while zero_in_degree:
@@ -565,9 +492,7 @@ class TorchGraph:
                     zero_in_degree.append(neighbor)
 
         if len(execution_order) != len(self.nodes):
-            raise RuntimeError(
-                "Graph has at least one cycle; topological sort not possible"
-            )
+            raise RuntimeError("Graph has at least one cycle; topological sort not possible")
 
         return execution_order
 

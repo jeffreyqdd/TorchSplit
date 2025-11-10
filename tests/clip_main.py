@@ -1,9 +1,12 @@
+from collections.abc import Generator
+from typing import Any, NoReturn
+
 import torch
 import torch.nn as nn
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 
-from torch_split.client import InstrumentedModule, SplitClient
+from torch_split.client import SplitClient
 
 
 class CLIPFullWrapper(nn.Module):
@@ -38,36 +41,22 @@ class TestInterface(SplitClient):
     def get_model(self) -> torch.nn.Module:
         return self.model
 
-    def get_example_inputs(self) -> tuple[tuple[torch.Tensor, ...], dict[str, torch.Tensor]]:
-        img = Image.new("RGB", (224, 224), color=(255, 255, 255))  # for _ in range(16)
-        texts = "a plain white square"  # for _ in range(16)#]
+    def batch_sizes(self) -> list[int]:
+        return [1, 2, 4, 8]
 
-        enc = self.processor(images=img, text=texts, return_tensors="pt", padding=True)  # type: ignore
-        pixel_values = enc["pixel_values"]  # .to("cuda:0")
-        input_ids = enc["input_ids"]  # .to("cuda:0")
-        attention_mask = enc["attention_mask"]  # .to("cuda:0")
+    def get_benchmarks(
+        self, batch_size: int
+    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
+        def get_example_inputs(bs: int):
+            while True:
+                img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(bs)]
+                texts = [f"a plain white square {i}" for i in range(bs)]
 
-        return (pixel_values, input_ids, attention_mask), {}
+                enc = self.processor(images=img, text=texts, return_tensors="pt", padding=True)  # type: ignore
+                pixel_values = enc["pixel_values"]
+                input_ids = enc["input_ids"]
+                attention_mask = enc["attention_mask"]
 
-    def run_benchmark(self, module: InstrumentedModule):
-        """Run benchmarks with different batch sizes for CLIP model."""
-        device = next(self.model.parameters()).device
+                yield (pixel_values, input_ids, attention_mask), {}
 
-        # Test with different batch sizes
-        for batch_size in [1, 2, 4, 8, 16]:
-            print(f"Running benchmark with batch_size={batch_size}")
-
-            with module(batch_size) as m:
-                # Generate batch inputs
-                imgs = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(batch_size)]
-                texts = [f"a plain white square {i}" for i in range(batch_size)]
-
-                # Process inputs
-                enc = self.processor(images=imgs, text=texts, return_tensors="pt", padding=True)  # type: ignore
-                pixel_values = enc["pixel_values"]  # .to(device)
-                input_ids = enc["input_ids"]  # .to(device)
-                attention_mask = enc["attention_mask"]  # .to(device)
-
-                # Run multiple iterations for stable measurements
-                for _ in range(128):  # 10 warmup + measurement runs
-                    m.run(pixel_values, input_ids, attention_mask)
+        return 10, 30, get_example_inputs(batch_size)

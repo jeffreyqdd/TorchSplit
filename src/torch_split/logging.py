@@ -3,15 +3,19 @@
 import contextlib
 import functools
 import logging
+import os
 import threading
 import time
 
 from rich.logging import RichHandler
 
+CURRENT_LOG_LEVEL = os.getenv("TORCHSPLIT_LOG_LEVEL", "INFO").upper()
+
 
 def get_logger(name: str) -> logging.Logger:
     """Get a logger with RichHandler for colored output."""
     logger = logging.getLogger(name)
+    logger.setLevel(getattr(logging, CURRENT_LOG_LEVEL, logging.INFO))
 
     if not logger.handlers:
         # logger should show time, but not the path to reduce clutter
@@ -33,12 +37,8 @@ def get_logger(name: str) -> logging.Logger:
         logger.propagate = False
 
     logger.name = name
+    logger.setLevel(CURRENT_LOG_LEVEL)
     return logger
-
-
-def set_level(level: str):
-    """Set the logging level for the root logger."""
-    logging.basicConfig(level=getattr(logging, level.upper()))
 
 
 def timer(logger=None, name=None):

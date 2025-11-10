@@ -3,10 +3,12 @@ import importlib
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch_split.client as client
 import torch_split.core as core
 import torch_split.logging as logging
+import torch_split.profiling.annotators as annotators
 import torch_split.utils as utils
 
 sys.path.insert(0, ".")
@@ -17,33 +19,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "model", type=str, help="Path to TorchSplitClient interface instance e.g. './src/main.py:client'"
     )
-    parser.add_argument("-v", action="store_true", help="enable verbose")
-    parser.add_argument("-vv", action="store_true", help="enable more verbose")
-    parser.add_argument("-vvv", action="store_true", help="enable most verbose")
     parser.add_argument(
         "-o", "--output", type=str, default="torchsplit_bin", help="output path for artifacts and cache"
     )
     parser.add_argument(
         "-d", "--dataflow", action="store_true", help="render visualization of dataflow graph in the output path"
     )
-    args = parser.parse_args()
+    program_args = parser.parse_args()
 
-    # set logging level
-    if args.vvv:
-        args.log_level = "DEBUG"
-    elif args.vv:
-        args.log_level = "INFO"
-    elif args.v:
-        args.log_level = "WARNING"
-    else:
-        args.log_level = "ERROR"
-
-    logging.set_level(args.log_level)
     logger = logging.get_logger(__name__)
 
-    module_path, class_name = args.model.split(":")
+    module_path, class_name = program_args.model.split(":")
     module_path = module_path.replace("/", ".").rstrip(".py").lstrip(".")
-    logger.debug("loading '%s' from module: '%s'", class_name, module_path)
+    logger.info("loading '%s' from module: '%s'", class_name, module_path)
 
     # load module
     module = importlib.import_module(module_path)
@@ -52,7 +40,7 @@ if __name__ == "__main__":
     model_hash = utils.hash_model_architecture(split_client.get_model())
 
     # create output directory
-    output_dir = Path(args.output)
+    output_dir = Path(program_args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     architecture_hash_file = output_dir / "architecture.hash"
     architecture_hash_file.touch(exist_ok=True)
@@ -61,32 +49,77 @@ if __name__ == "__main__":
         previous_hash = f.readline().strip()
         require_update = previous_hash != model_hash
 
-    logger.info("artifacts and cache will be stored in %s", output_dir.absolute())
     logger.info("model: %s", model_name)
     logger.info("model hash: %s", model_hash)
+    logger.info("model artifacts: %s", output_dir.absolute())
 
-    gm = utils.capture_graph(split_client)
-
-    # check to see if there's a need to run profiling
     if require_update:
-        logger.info("model architecture has changed since last run, running profiling")
-        instrumented_model = client.InstrumentedModule(gm)
-        instrumented_model = split_client.setup_benchmark(instrumented_model)
-        instrumented_model.export_to_file(output_dir / "profiling.json")
-        logger.info("profiling data saved to %s", (output_dir / "profiling.json").absolute())
+        logger.info("model architecture has changed since last run, updating annotations and profiling data")
+
+        for batch_size in split_client.batch_sizes():
+            logger.debug("capturing graph for batch size %d", batch_size)
+
+            device_file = output_dir / "annotations" / f"device_batchsize_{batch_size}.json"
+            profiling_file = output_dir / "annotations" / f"profiling_batchsize_{batch_size}.json"
+            device_file.parent.mkdir(parents=True, exist_ok=True)
+            profiling_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # generate graph
+            warmup_rounds, iterations, generator = split_client.get_benchmarks(batch_size)
+            args, kwargs = generator.__next__()
+            gm = utils.capture_graph(split_client, *args, **kwargs)
+
+            d_annotator = annotators.DeviceAnnotator(gm)
+            d_annotator.run(*args, **kwargs)
+            rt_annotator = annotators.RuntimeAnnotator(gm)
+            with rt_annotator:
+                for _ in range(warmup_rounds):
+                    args, kwargs = generator.__next__()
+                    rt_annotator.run(*args, **kwargs)
+
+                for _ in range(iterations):
+                    args, kwargs = generator.__next__()
+                    rt_annotator.run(*args, **kwargs)
+
+            # save
+            with open(device_file, "w") as f:
+                f.write(d_annotator.get_json())
+
+            with open(profiling_file, "w") as f:
+                f.write(rt_annotator.get_json())
+
+        # update architecture hash
         with open(architecture_hash_file, "w") as f:
             f.write(model_hash + "\n")
 
-    with open(output_dir / "profiling.json", "r") as f:
-        profiling_data = json.load(f)
-
-    # create annotated graph
+    warmup_rounds, iterations, generator = split_client.get_benchmarks(split_client.batch_sizes()[0])
+    args, kwargs = generator.__next__()
+    gm = utils.capture_graph(split_client, *args, **kwargs)
     torch_graph = core.TorchGraph.from_fx_graph(gm)
-    torch_graph.annotate_with_profiling_data(profiling_data)
+
+    logger.info("annotating graph with profiling data")
+    for batch_size in split_client.batch_sizes():
+        device_file = output_dir / "annotations" / f"device_batchsize_{batch_size}.json"
+        profiling_file = output_dir / "annotations" / f"profiling_batchsize_{batch_size}.json"
+
+        with open(profiling_file, "r") as f:
+            profiling_data = json.load(f)
+
+        with open(device_file, "r") as f:
+            device_data = json.load(f)
+
+        torch_graph.annotate_with_profiling_data(batch_size, profiling_data)
+
+    logger.info("generating partitions")
     partition_provider = core.PartitionProvider(torch_graph)
 
-    if args.dataflow:
-        partition_provider.visualize_dataflow(output_dir / "visualizations")
+    if program_args.dataflow:
+        partition_provider.visualize_dataflow(output_dir / "visualizations", True)
+        partition_provider.visualize_dominance(output_dir / "visualizations")
 
-    # run partitioning
+    # # run partitioning
     partition_provider.create_partition()
+
+    # torch_graph_dict: dict[int, core.TorchGraph] = {}
+    # device_dict: dict[int, str] = {}
+    # profiling_dict: dict[int, str] = {}

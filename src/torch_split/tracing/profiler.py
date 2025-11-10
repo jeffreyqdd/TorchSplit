@@ -42,13 +42,7 @@
 #         self._node_runtime_secs: dict[fx.Node, float] = {}
 #         self._device = device
 
-#     def run(self, *args, **kwargs):
-#         # time execution
-#         # time_start = time.perf_counter_ns()
-#         ret = super().run(*args, **kwargs)
-#         # elapsed_time = time.perf_counter_ns() - time_start
-#         # get generated objects
-#         return ret
+
 
 #     def run_node(self, n: fx.Node):
 #         # Synchronize before timing to ensure clean start

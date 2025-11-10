@@ -1,10 +1,10 @@
-from pathlib import Path
+from collections.abc import Generator
+from typing import Any, NoReturn
 
 import torch
 import torch.nn as nn
 
-import torch_split.utils as utils
-from torch_split.client import InstrumentedModule, SplitClient
+from torch_split.client import SplitClient
 
 
 def with_hint(x):
@@ -53,10 +53,37 @@ class SimpleModel(nn.Module):
         super(SimpleModel, self).__init__()
         self.fc1 = nn.Linear(100, 50)
         self.fc2 = nn.Linear(50, 10)
+        self.fc3 = nn.Linear(10, 10)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc3(x))
         return x
 
 
@@ -81,33 +108,20 @@ class TestInterface(SplitClient):
     def get_model(self) -> torch.nn.Module:
         return self.model
 
+    def batch_sizes(self) -> list[int]:
+        return [1, 2, 4, 8, 16, 32, 64, 18, 256, 512]
+
     def get_example_inputs(
         self,
     ) -> tuple[tuple[torch.Tensor, ...], dict[str, torch.Tensor]]:
         example_input = torch.randn(1, 100)
         return (example_input,), {}
 
-    def run_benchmark(self, module: InstrumentedModule):
-        for batch_size in [1, 8, 16, 32, 64]:
-            with module(batch_size) as m:
-                for _ in range(30):
-                    m.run(torch.randn(batch_size, 100).to("cuda:0"))
+    def get_benchmarks(
+        self, batch_size: int
+    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
+        def get_example_inputs(bs: int):
+            while True:
+                yield (torch.randn(bs, 100),), {}
 
-
-x = utils.capture_graph2(TestInterface())
-print(x)
-# gm = capture_graph(TestInterface())
-# im = annotators.RuntimeAnnotator(gm)
-# im.run(torch.randn(1, 100).to("cuda:0"))
-
-# export_path = Path("./.bin/toy")
-# pp = partition.PartitionProvider(TestInterface())
-# pp.visualize_dominance(export_path)
-# pp.visualize_dataflow(export_path)
-# pp.create_partition()
-
-# interpreter = profiler.InstrumentedModel(TestInterface())
-# interpreter.run(torch.randn(1, 3, 32, 32))
-# interpreter.run(torch.randn(1, 3, 32, 32))
-# interpreter.run(torch.randn(1, 3, 32, 32))
-# interpreter.run(torch.randn(1, 3, 32, 32))
+        return 10, 30, get_example_inputs(batch_size)
