@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "torch-split"
 version = "0.1.0"
 description = "PyTorch model analysis and splitting tool"
-requires-python = ">=3.10"
+requires-python = ">=3.10, <3.14"
 
 dependencies = [
     "torch>=2.8.0",
@@ -19,6 +19,7 @@ dependencies = [
     "numpy>=2.2.6",
     "msgpack>=1.1.2",
     "rich>=14.2.0",
+    "gurobipy (>=13.0.0,<14.0.0)",
 ]
 
 [project.optional-dependencies]
@@ -26,3 +27,12 @@ typing = ["types-frozendict"]
 
 [tool.ruff]
 line-length = 120
+
+[dependency-groups]
+dev = [
+    "pillow (>=12.0.0,<13.0.0)",
+    "transformers (>=4.57.1,<5.0.0)",
+    "isort (>=7.0.0,<8.0.0)",
+    "black (>=25.11.0,<26.0.0)",
+    "ruff (>=0.14.4,<0.15.0)"
+]

@@ -166,6 +166,7 @@ class RuntimeAnnotator(fx.Interpreter):
     @contextmanager
     def _cuda_profile(self, device: torch.device):
         meas = RuntimeAnnotator._Measurement()
+        torch.cuda.reset_max_memory_allocated(device)
         torch.cuda.synchronize()
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
@@ -176,15 +177,11 @@ class RuntimeAnnotator(fx.Interpreter):
             end_event.record()
             torch.cuda.synchronize()
             meas.time_ms = start_event.elapsed_time(end_event)
-            meas.peak_memory_bytes = torch.cuda.max_memory_reserved(device)
-            # Ensure events are cleaned up immediately
-            del end_event
-            del start_event
+            meas.peak_memory_bytes = torch.cuda.max_memory_allocated(device)
 
     @contextmanager
     def _mps_profile(self, device: torch.device):
         meas = RuntimeAnnotator._Measurement()
-        # Use wall-clock timing with MPS; Event-based timing can be fragile across PyTorch versions
         torch.mps.synchronize()
         start_ns = time.perf_counter_ns()
         try:
