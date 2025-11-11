@@ -1,5 +1,6 @@
 import json
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +73,11 @@ class RuntimeAnnotator(fx.Interpreter):
         output_size_bytes: list[int] = field(default_factory=list)
         peak_memory_usage_bytes: list[int] = field(default_factory=list)
 
+    @dataclass
+    class _Measurement:
+        time_ms: float = 0.0
+        peak_memory_bytes: int = 0
+
     def __init__(self, gm: fx.GraphModule):
         super().__init__(gm)
         self._inside_ctx = False
@@ -85,21 +91,21 @@ class RuntimeAnnotator(fx.Interpreter):
         return ret
 
     def run_node(self, n: fx.Node):
-        if n.meta["torch_split_device"].type == "cuda":
-            start_hook = self._cuda_start_hook
-            stop_hook = self._cuda_stop_hook
-        elif n.meta["torch_split_device"].type == "mps":
-            start_hook = self._mps_start_hook
-            stop_hook = self._mps_stop_hook
+        device: torch.device = n.meta["torch_split_device"]
+
+        # Choose device-specific profiling context
+        if device.type == "cuda":
+            ctx = self._cuda_profile
+        elif device.type == "mps":
+            ctx = self._mps_profile
         else:
-            start_hook = self._cpu_start_hook
-            stop_hook = self._cpu_stop_hook
+            ctx = self._cpu_profile
 
-        start_hook(n.meta["torch_split_device"])
+        with ctx(device) as meas:
+            ret = super().run_node(n)
 
-        ret = super().run_node(n)
-
-        time_elapsed_ms, peak_memory_used_bytes = stop_hook(n.meta["torch_split_device"])
+        time_elapsed_ms = meas.time_ms
+        peak_memory_used_bytes = meas.peak_memory_bytes
         output_size_bytes = _estimate_tensor_size(ret)
 
         # get corresponding node
@@ -156,44 +162,45 @@ class RuntimeAnnotator(fx.Interpreter):
                 "max_peak_memory_usage_bytes": max(profiler_result.peak_memory_usage_bytes),
             }
 
-    ### device profiling hooks
-    def _cuda_start_hook(self, device: torch.device):
+    ### device profiling context managers
+    @contextmanager
+    def _cuda_profile(self, device: torch.device):
+        meas = RuntimeAnnotator._Measurement()
         torch.cuda.synchronize()
-        self._cuda_start_event = torch.cuda.Event(enable_timing=True)
-        self._cuda_end_event = torch.cuda.Event(enable_timing=True)
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        try:
+            yield meas
+        finally:
+            end_event.record()
+            torch.cuda.synchronize()
+            meas.time_ms = start_event.elapsed_time(end_event)
+            meas.peak_memory_bytes = torch.cuda.max_memory_reserved(device)
+            # Ensure events are cleaned up immediately
+            del end_event
+            del start_event
 
-        self._cuda_start_event.record()
-
-    def _cuda_stop_hook(self, device: torch.device):
-        self._cuda_end_event.record()
-        torch.cuda.synchronize()
-
-        time_elapsed_ms = self._cuda_start_event.elapsed_time(self._cuda_end_event)
-        peak_memory_used_bytes = torch.cuda.max_memory_reserved(device)
-
-        return time_elapsed_ms, peak_memory_used_bytes
-
-    def _mps_start_hook(self, device: torch.device):
+    @contextmanager
+    def _mps_profile(self, device: torch.device):
+        meas = RuntimeAnnotator._Measurement()
+        # Use wall-clock timing with MPS; Event-based timing can be fragile across PyTorch versions
         torch.mps.synchronize()
-        self._mps_start_event = torch.mps.Event(enable_timing=True)
-        self._mps_end_event = torch.mps.Event(enable_timing=True)
+        start_ns = time.perf_counter_ns()
+        try:
+            yield meas
+        finally:
+            torch.mps.synchronize()
+            meas.time_ms = (time.perf_counter_ns() - start_ns) / 1e6
+            # Best available metric on MPS: total driver-allocated memory
+            meas.peak_memory_bytes = torch.mps.driver_allocated_memory()
 
-        self._mps_start_event.record()
-
-    def _mps_stop_hook(self, device: torch.device):
-        self._mps_end_event.record()
-        torch.mps.synchronize()
-
-        time_elapsed_ms = self._mps_start_event.elapsed_time(self._mps_end_event)
-        peak_memory_used_bytes = torch.mps.driver_allocated_memory()
-
-        return time_elapsed_ms, peak_memory_used_bytes
-
-    def _cpu_start_hook(self, device: torch.device):
-        self._cpu_start_time = time.perf_counter_ns()
-
-    def _cpu_stop_hook(self, device: torch.device):
-        time_elapsed_ms = (time.perf_counter_ns() - self._cpu_start_time) / 1e6
-        peak_memory_used_bytes = 0
-
-        return time_elapsed_ms, peak_memory_used_bytes
+    @contextmanager
+    def _cpu_profile(self, device: torch.device):
+        meas = RuntimeAnnotator._Measurement()
+        start_ns = time.perf_counter_ns()
+        try:
+            yield meas
+        finally:
+            meas.time_ms = (time.perf_counter_ns() - start_ns) / 1e6
+            meas.peak_memory_bytes = 0

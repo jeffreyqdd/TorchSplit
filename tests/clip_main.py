@@ -35,14 +35,16 @@ class TestInterface(SplitClient):
         model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         model.eval()
 
+        self.device = torch.device("mps")
         self.model = CLIPFullWrapper(model)  # .to("cuda:0")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        self.model.to(self.device)
 
     def get_model(self) -> torch.nn.Module:
         return self.model
 
     def batch_sizes(self) -> list[int]:
-        return [1, 2, 4, 8]
+        return [1, 2, 4, 8, 16, 32]
 
     def get_benchmarks(
         self, batch_size: int
@@ -53,9 +55,9 @@ class TestInterface(SplitClient):
                 texts = [f"a plain white square {i}" for i in range(bs)]
 
                 enc = self.processor(images=img, text=texts, return_tensors="pt", padding=True)  # type: ignore
-                pixel_values = enc["pixel_values"]
-                input_ids = enc["input_ids"]
-                attention_mask = enc["attention_mask"]
+                pixel_values = enc["pixel_values"].to(self.device)
+                input_ids = enc["input_ids"].to(self.device)
+                attention_mask = enc["attention_mask"].to(self.device)
 
                 yield (pixel_values, input_ids, attention_mask), {}
 

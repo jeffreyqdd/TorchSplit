@@ -1,5 +1,5 @@
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterable, Set
 from dataclasses import dataclass
 from functools import cached_property, lru_cache
@@ -150,15 +150,15 @@ class PartitionProvider:
         self._dominance.render_graph(self._dominance.reverse_pdom_tree, rev_pdom_tree_gv)
         rev_pdom_tree_gv.render(export_path / "rev_post_dominance_tree", format="pdf")
 
-    def create_partition(
+    def solve_partitioning_problem(
         self,
         min_compute_share: float = 0.10,
-        # strategy: str = "branch_parallel",  # future: "hybrid", "pipeline"
-        # top_k: int = 1,
-        # alpha: float = 1.0,  # compute imbalance weight
-        # beta: float = 1.0,  # communication weight
-        # gamma: float = 1000.0,  # memory violation penalty
-        # beta_tp: float = 10.0,  # TP disruption penalty (if used)
+        strategy: str = "branch_parallel",  # future: "hybrid", "pipeline"
+        top_k: int = 1,
+        alpha: float = 1.0,  # compute imbalance weight
+        beta: float = 1.0,  # communication weight
+        gamma: float = 1000.0,  # memory violation penalty
+        beta_tp: float = 10.0,  # TP disruption penalty (if used)
     ) -> list["PartitionProvider.PartitionCandidate"]:
         logger.info("Creating partitions | minimum compute share %f", min_compute_share)
 
@@ -197,6 +197,7 @@ class PartitionProvider:
             ):
                 accepted.append(p)
 
+        # prune subsumed candidates
         logger.info("Selected %d partitions after pruning", len(accepted))
         for a in accepted:
             logger.debug(
@@ -208,62 +209,40 @@ class PartitionProvider:
                 self._highest_empirical_weight(a.execution_time_ms, entire_graph_execution_time, 0),
             )
 
-        for p in accepted:
+        subsumption: dict[PartitionProvider.PartitionCandidate, set[PartitionProvider.PartitionCandidate]] = {}
+        for i, a in enumerate(accepted):
+            for j, b in enumerate(accepted):
+                if i != j and self.subsumes(a.partition, b.partition):
+                    subsumption.setdefault(a, set()).add(b)
+        for p in list(subsumption):
+            t, stack = set(), list(subsumption[p])
+            while stack:
+                c = stack.pop()
+                for g in subsumption.get(c, ()):
+                    if g not in t:
+                        t.add(g)
+                        stack.append(g)
+            subsumption[p] -= t
+        roots = [p for p in subsumption if p not in {c for v in subsumption.values() for c in v}]
+
+        # # log resulting hierarchy
+        def _log_tree(node: PartitionProvider.PartitionCandidate, depth: int = 0):
+            indent = "  " * depth
             logger.debug(
-                "Partition %s %s | %d nodes",
-                self._dominance.name_of(p.partition.source),
-                self._dominance.name_of(p.partition.sink),
-                len(p.partition.total_enclosed_region),
+                "%sRegion %s→%s | %d nodes",
+                indent,
+                self._dominance.name_of(node.partition.source),
+                self._dominance.name_of(node.partition.sink),
+                len(node.partition.total_enclosed_region),
             )
 
-        # parent_of = {}
-        # parent = {}
-        # region_tree = {}
-        # stack = []
-        # for p in accepted:
-        #     # Pop until we find a region that subsumes this one
-        #     while stack and not self.subsumes(stack[-1].partition, p.partition):
-        #         stack.pop()
+            for child in subsumption.get(node, []):
+                _log_tree(child, depth + 1)
 
-        #     parent = stack[-1] if stack else None
-        #     parent_of[p] = parent
+        for root in roots:
+            _log_tree(root)
 
-        #     if parent:
-        #         region_tree.setdefault(parent, []).append(p)
-        #     else:
-        #         region_tree.setdefault(None, []).append(p)  # root-level region
-
-        #     stack.append(p)
-
-        # # Step 3: Optionally log the resulting hierarchy
-        # def _log_tree(node, depth: int = 0):
-        #     for child in region_tree.get(node, []):
-        #         indent = "  " * depth
-        #         logger.info(
-        #             "%sRegion %s→%s | %d nodes",
-        #             indent,
-        #             self._dominance.name_of(child.partition.source),
-        #             self._dominance.name_of(child.partition.sink),
-        #             len(child.partition.total_enclosed_region),
-        #         )
-        #         _log_tree(child, depth + 1)
-
-        # logger.info("=== Region Tree ===")
-        # _log_tree(None)
-
-        # accepted is a set of of Partitions which form a laminar family, meaning, that each pair of sets are
-        # either disjoint or related by subsumption
-
-        # if keep:
-        #     accepted.add(evaluated_partition)
-        # else:
-        #     accepted.difference_update(removed)
-        # logger.debug(
-        #     "Partition with %s %s subgraphs, flops=%.2f",
-        #     self._dominance.name_of(partition.partition.source),
-        #     self._dominance.name_of(partition.partition.sink),
-        #     partition.flops,
-        # )
+        logger.info("Selecting partitions now; this might take a moment...")
 
         return []
 
@@ -390,13 +369,13 @@ class PartitionProvider:
         """Estimate total execution time of a partition by summing subgraph times.
 
         Args:
-            partition (PartitionProvider.Partition): assumes seqeuential execution of subgraphs
+            partition (PartitionProvider.Partition): assumes sequential execution of subgraphs
 
         Returns:
             tuple[float, float]: avg execution time, std execution time
         """
 
-        ret = defaultdict(lambda: [0, 0])
+        ret: defaultdict[int, list[int]] = defaultdict(lambda: [0, 0])
 
         for subgraph in partition.subgraphs:
             for node_uid in subgraph.enclosed_region:
@@ -621,31 +600,7 @@ class PartitionProvider:
                     continue
 
                 valid_cut_count += 1
-                source_name = self._dominance.name_of(source_node)
-                sink_name = self._dominance.name_of(sink_node)
-
-                logger.debug(
-                    "[cyan]Processing SESE[/]: [yellow]%s[/] -> [yellow]%s[/]",
-                    source_name,
-                    sink_name,
-                )
                 partition = self._get_partition_from_cut(candidate_cut)
-
-                for idx, subgraph in enumerate(partition.subgraphs):
-                    input_names = [self.torch_graph.name_from_uid(uid) for uid in subgraph.inputs]
-                    output_names = [self.torch_graph.name_from_uid(uid) for uid in subgraph.outputs]
-
-                    # Format names with truncation for readability
-                    inputs_display = ", ".join(input_names[:3]) + ("..." if len(input_names) > 3 else "")
-                    outputs_display = ", ".join(output_names[:3]) + ("..." if len(output_names) > 3 else "")
-
-                    logger.debug(
-                        "  [green]Subgraph %d[/]: [blue]inputs[/]=[cyan]%s[/], [magenta]outputs[/]=[cyan]%s[/] [dim](%d nodes)[/]",
-                        idx + 1,
-                        inputs_display,
-                        outputs_display,
-                        len(subgraph.enclosed_region),
-                    )
 
                 partitions.append(partition)
 

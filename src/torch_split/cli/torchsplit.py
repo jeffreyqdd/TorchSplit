@@ -118,7 +118,7 @@ if __name__ == "__main__":
         partition_provider.visualize_dominance(output_dir / "visualizations")
 
     # # run partitioning
-    partition_provider.create_partition()
+    partition_provider.solve_partitioning_problem()
 
     # torch_graph_dict: dict[int, core.TorchGraph] = {}
     # device_dict: dict[int, str] = {}
