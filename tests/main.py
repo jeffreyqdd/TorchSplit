@@ -78,8 +78,8 @@ class ToyExample(nn.Module):
 class TestInterface(SplitClient):
     def __init__(self):
         super().__init__()
-        self.device = torch.device("mps")
-        self.model = ToyExample()
+        self.device = self.get_best_device()
+        self.model = Toy()
         self.model.to(self.device)
 
     def get_model(self) -> torch.nn.Module:
@@ -97,7 +97,9 @@ class TestInterface(SplitClient):
 
     def get_benchmarks(
         self, batch_size: int
-    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
+    ) -> tuple[
+        int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]
+    ]:
         def get_example_inputs(bs: int):
             while True:
                 yield (torch.randn(bs, 100).to(self.device),), {}

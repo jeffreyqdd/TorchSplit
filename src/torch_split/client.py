@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Generator
 from typing import Any, NoReturn
 
+import torch
 import torch.nn as nn
 
 
@@ -28,3 +29,12 @@ class SplitClient(ABC):
         Returns a tuple of (warmup runs, [args, kwargs])
         """
         raise NotImplementedError("SplitClient.run_benchmark is not implemented")
+
+    def get_best_device(self) -> torch.device:
+        """Return the best device to run the model on."""
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        elif torch.mps.is_available():
+            return torch.device("mps")
+        else:
+            return torch.device("cpu")

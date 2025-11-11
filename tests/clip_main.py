@@ -35,7 +35,7 @@ class TestInterface(SplitClient):
         model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         model.eval()
 
-        self.device = torch.device("mps")
+        self.device = self.get_best_device()
         self.model = CLIPFullWrapper(model)  # .to("cuda:0")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
         self.model.to(self.device)
