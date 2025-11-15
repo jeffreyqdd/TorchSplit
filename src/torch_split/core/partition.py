@@ -150,16 +150,16 @@ class PartitionProvider:
         self._dominance.render_graph(self._dominance.reverse_pdom_tree, rev_pdom_tree_gv)
         rev_pdom_tree_gv.render(export_path / "rev_post_dominance_tree", format="pdf")
 
-    def solve_partitioning_problem(
+    def generate_tree(
         self,
         min_compute_share: float = 0.10,
-        strategy: str = "branch_parallel",  # future: "hybrid", "pipeline"
-        top_k: int = 1,
-        alpha: float = 1.0,  # compute imbalance weight
-        beta: float = 1.0,  # communication weight
-        gamma: float = 1000.0,  # memory violation penalty
-        beta_tp: float = 10.0,  # TP disruption penalty (if used)
-    ) -> list["PartitionProvider.PartitionCandidate"]:
+    ) -> tuple[
+        "PartitionProvider",
+        dict[
+            "PartitionProvider.PartitionCandidate",
+            set["PartitionProvider.PartitionCandidate"],
+        ],
+    ]:
         logger.info("Creating partitions | minimum compute share %f", min_compute_share)
 
         source = self._dominance.dom_root()
@@ -209,7 +209,10 @@ class PartitionProvider:
                 self._highest_empirical_weight(a.execution_time_ms, entire_graph_execution_time, 0),
             )
 
-        subsumption: dict[PartitionProvider.PartitionCandidate, set[PartitionProvider.PartitionCandidate]] = {}
+        subsumption: dict[
+            PartitionProvider.PartitionCandidate,
+            set[PartitionProvider.PartitionCandidate],
+        ] = {}
         for i, a in enumerate(accepted):
             for j, b in enumerate(accepted):
                 if i != j and self.subsumes(a.partition, b.partition):
@@ -244,7 +247,7 @@ class PartitionProvider:
 
         logger.info("Selecting partitions now; this might take a moment...")
 
-        return []
+        return (self, subsumption)
 
     def _highest_empirical_weight(
         self,

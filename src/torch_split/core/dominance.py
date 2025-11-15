@@ -203,11 +203,6 @@ class DominanceInformation:
 
         if iteration >= max_iterations:
             logger.warning("[red]dominance computation hit iteration limit (%d)[/]", max_iterations)
-        else:
-            logger.info(
-                "dominance computation complete [dim](%d iterations)[/]",
-                iteration,
-            )
 
         return dom
 

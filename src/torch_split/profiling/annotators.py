@@ -62,6 +62,10 @@ class DeviceAnnotator(fx.Interpreter):
 
         return result
 
+    def run(self, *args, **kwargs) -> "DeviceAnnotator":
+        super().run(*args, **kwargs)
+        return self
+
     def get_json(self):
         return json.dumps(self.device_map, indent=2)
 
@@ -114,19 +118,20 @@ class RuntimeAnnotator(fx.Interpreter):
                 "cpu": self._cpu_memory,
             },
             RuntimeAnnotator.Mode.NETWORK: {
-                "cuda": lambda _: None,
-                "mps": lambda _: None,
-                "cpu": lambda _: None,
+                "cuda": self._noop_profiler,
+                "mps": self._noop_profiler,
+                "cpu": self._noop_profiler,
+            },
+            RuntimeAnnotator.Mode.WARMUP: {
+                "cuda": self._noop_profiler,
+                "mps": self._noop_profiler,
+                "cpu": self._noop_profiler,
             },
         }
-        self._mode_profilers = self._profilers[self._mode]
 
     def run(self, *args, **kwargs):
         if not self._inside_ctx:
-            raise RuntimeError(
-                "RuntimeAnnotator.run must be called inside a context manager specifying batch size"
-            )
-        self._mode_profilers = self._profilers[self._mode]
+            raise RuntimeError("RuntimeAnnotator.run must be called inside a context manager specifying batch size")
         ret = super().run(*args, **kwargs)
         return ret
 
@@ -162,6 +167,7 @@ class RuntimeAnnotator(fx.Interpreter):
     ### context manager to specify batch size
     def set_mode(self, mode: "RuntimeAnnotator.Mode"):
         self._mode = mode
+        self._mode_profilers = self._profilers[mode]
 
     def __enter__(self):
         self._inside_ctx = True
@@ -173,9 +179,7 @@ class RuntimeAnnotator(fx.Interpreter):
 
         for node_name, profiler_result in self._node_statistics.items():
             avg_time = sum(profiler_result.time_ms) / len(profiler_result.time_ms)
-            avg_output_size = sum(profiler_result.output_size_bytes) / len(
-                profiler_result.output_size_bytes
-            )
+            avg_output_size = sum(profiler_result.output_size_bytes) / len(profiler_result.output_size_bytes)
             avg_peak_memory = sum(profiler_result.peak_memory_usage_bytes) / len(
                 profiler_result.peak_memory_usage_bytes
             )
@@ -196,12 +200,8 @@ class RuntimeAnnotator(fx.Interpreter):
                 "max_time_ms": max(profiler_result.time_ms),
                 "min_output_size_bytes": min(profiler_result.output_size_bytes),
                 "max_output_size_bytes": max(profiler_result.output_size_bytes),
-                "min_peak_memory_usage_bytes": min(
-                    profiler_result.peak_memory_usage_bytes
-                ),
-                "max_peak_memory_usage_bytes": max(
-                    profiler_result.peak_memory_usage_bytes
-                ),
+                "min_peak_memory_usage_bytes": min(profiler_result.peak_memory_usage_bytes),
+                "max_peak_memory_usage_bytes": max(profiler_result.peak_memory_usage_bytes),
             }
 
     ### device profiling context managers
@@ -227,9 +227,7 @@ class RuntimeAnnotator(fx.Interpreter):
             yield measurement
         finally:
             torch.cuda.synchronize()
-            device_traces: list[list[Any]] = torch.cuda.memory._snapshot(device=device)[
-                "device_traces"
-            ]
+            device_traces: list[list[Any]] = torch.cuda.memory._snapshot(device=device)["device_traces"]
             total_memory_bytes = 0
             for trace_list in device_traces:
                 for trace_entry in trace_list:
@@ -263,9 +261,7 @@ class RuntimeAnnotator(fx.Interpreter):
             yield measurement
         finally:
             torch.mps.synchronize()
-            measurement.peak_memory_bytes = (
-                torch.mps.driver_allocated_memory() // self._num_nodes
-            )
+            measurement.peak_memory_bytes = torch.mps.driver_allocated_memory() // self._num_nodes
             warnings.warn("Metal memory profiling is approximate")
 
     @contextmanager
@@ -285,3 +281,11 @@ class RuntimeAnnotator(fx.Interpreter):
         finally:
             measurement.peak_memory_bytes = 0
             warnings.warn("CPU memory profiling is not supported")
+
+    @contextmanager
+    def _noop_profiler(self, device: torch.device):
+        measurement = RuntimeAnnotator.Measurement()
+        try:
+            yield measurement
+        finally:
+            pass

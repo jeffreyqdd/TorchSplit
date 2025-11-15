@@ -79,7 +79,7 @@ class TestInterface(SplitClient):
     def __init__(self):
         super().__init__()
         self.device = self.get_best_device()
-        self.model = Toy()
+        self.model = ToyExample()
         self.model.to(self.device)
 
     def get_model(self) -> torch.nn.Module:
