@@ -59,35 +59,10 @@ class SimpleModel(nn.Module):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
-        x = torch.relu(self.fc3(x))
         return x
 
 
-class Toy(nn.Module):
+class ToyExample(nn.Module):
     def __init__(self):
         super().__init__()
         self.model1 = SimpleModel()
@@ -104,7 +79,7 @@ class TestInterface(SplitClient):
     def __init__(self):
         super().__init__()
         self.device = torch.device("mps")
-        self.model = Toy()
+        self.model = ToyExample()
         self.model.to(self.device)
 
     def get_model(self) -> torch.nn.Module:
