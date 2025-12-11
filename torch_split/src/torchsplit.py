@@ -181,8 +181,8 @@ def main():
         all_partitions = sorted(all_partitions, key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
 
         selected_partitions = [all_partitions[0]]
-        layout = provider_partition.carve_subgraphs(selected_partitions)
-        layout.save_switchboard(Path("/dev/shm/switchboard.tmp"))
+        layout = provider_partition.create_switchboard(selected_partitions)
+        layout.save(Path("/dev/shm/switchboard.tmp"))
         # print(json.dumps(final, indent=2))
         # for id, d in data.items():
         #     print("------------------")

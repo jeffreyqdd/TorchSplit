@@ -24,5 +24,12 @@ dependencies = [
 [project.optional-dependencies]
 typing = ["types-frozendict"]
 
+[project.scripts]
+torchsplit = "torch_split.src.torchsplit:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["torch_split*"]
+
 [tool.ruff]
 line-length = 120

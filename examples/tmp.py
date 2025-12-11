@@ -15,15 +15,18 @@ from transformers import (
 )
 
 from torch_split.lib.client import SplitClient
-from torch_split.lib.partition.provider import SwitchboardLayout
+from torch_split.lib.switchboard import Switchboard
 
-x = SwitchboardLayout.load_switchboard(Path("/dev/shm/switchboard.tspartd"))
-# for y in x.modules.values():
-#     print(y.code)
+x = Switchboard.load(Path("/dev/shm/switchboard.tspartd"))
+for name, mod in x.components.items():
+    mod.eval()
+    print(f"--- Component {name} code ---")
+    print(mod.code)
+    print("---------------------------")
 
 processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-# original_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-# original_model.eval()
+original_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+original_model.eval()
 
 # # basic input
 img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(1)]
@@ -50,14 +53,13 @@ result = x.interpret(
     l_input_ids_=input_ids_cuda,
     l_attention_mask_=attention_mask_cuda,
 )
-print(result)
+original_output = original_model(
+    pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
+).logits_per_image
 
-# original_output = original_model(
-#     pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
-# ).logits_per_image
-
-# print("original", original_output)
-# print("split", result)
+print("original", original_output)
+print("split", result.keys())
+print("split output", result["C"])
 
 # # Calculate error metrics
 # abs_diff = torch.abs(original_output.to("cuda") - result)

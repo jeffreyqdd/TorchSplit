@@ -22,8 +22,10 @@ def get_logger(name: str) -> logging.Logger:
     if not logger.handlers:
         # avoid duplicating handlers
         handler = RichHandler(
+            console=Console(highlight=False, markup=True),
             rich_tracebacks=True,
             markup=True,
+            highlighter=None,
             show_time=True,
             show_path=False,
         )

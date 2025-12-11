@@ -1,24 +1,23 @@
 import itertools
-import pickle
-import json
-import uuid
-import base64
-import io
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Set
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from functools import cached_property, lru_cache
 from pathlib import Path
-import lzma
-from typing import Any, Type, TypeVar
+from typing import TypeVar
 
 import graphviz  # type: ignore
-import torch
 import torch.fx as fx
-from frozendict import frozendict
 
 import torch_split.lib.assertions as assertions
 import torch_split.lib.log as logging
+from torch_split.lib.switchboard import (
+    Switchboard,
+    ComponentMetadata,
+    ComponentName,
+    Entrypoint,
+    DownstreamNode,
+    SwitchboardLayout,
+)
 import torch_split.lib.utils as utils
 from torch_split.lib.ir import ConcreteNode, TorchGraph
 from torch_split.lib.partition.dominance import DominanceInformation, VirtualNode
@@ -32,10 +31,10 @@ ConcreteNodeSet = frozenset[ConcreteNode]
 
 @dataclass(frozen=True)
 class Subgraph:
-    inputs: ConcreteNodeSet
+    inputs: tuple[ConcreteNode, ...]
     """Subset of a cut's split set. Non-paremeter nodes. Should be input into the enclosed region"""
 
-    outputs: ConcreteNodeSet
+    outputs: tuple[ConcreteNode, ...]
     """Subset of a cut's join set. Non-parameter nodes. Should be output from the enclosed region (out-degree of 0)"""
 
     enclosed_region: ConcreteNodeSet
@@ -64,234 +63,234 @@ class Partition:
     """the subgraphs formed by this cut"""
 
 
-@dataclass(frozen=True)
-class SwitchboardLayout:
-    """Container for partition structure and corresponding GraphModules."""
+# @dataclass(frozen=True)
+# class SwitchboardLayout:
+#     """Container for partition structure and corresponding GraphModules."""
 
-    structure: dict
-    """The JSON structure describing the partition layout"""
+#     structure: dict
+#     """The JSON structure describing the partition layout"""
 
-    modules: dict[str, fx.GraphModule]
-    """Mapping of subgraph IDs to their extracted GraphModules"""
+#     modules: dict[str, fx.GraphModule]
+#     """Mapping of subgraph IDs to their extracted GraphModules"""
 
-    def interpret(self, **external_inputs: Any) -> Any:
-        """Execute the switchboard layout by running subgraphs in order.
+#     def interpret(self, **external_inputs: Any) -> Any:
+#         """Execute the switchboard layout by running subgraphs in order.
 
-        Args:
-            **external_inputs: Input tensors keyed by their original node names
+#         Args:
+#             **external_inputs: Input tensors keyed by their original node names
 
-        Returns:
-            The output from the final subgraph(s)
-        """
-        # Dictionary to store intermediate results indexed by node name
-        intermediate_results: dict[str, Any] = dict(external_inputs)
+#         Returns:
+#             The output from the final subgraph(s)
+#         """
+#         # Dictionary to store intermediate results indexed by node name
+#         intermediate_results: dict[str, Any] = dict(external_inputs)
 
-        # Print initial inputs
-        logger.info("[debug] external inputs:")
-        for name, tensor in external_inputs.items():
-            if isinstance(tensor, torch.Tensor):
-                logger.info(f"[debug]   {name}: {tensor.shape}")
-            else:
-                logger.info(f"[debug]   {name}: {type(tensor)}")
+#         # Print initial inputs
+#         logger.info("[debug] external inputs:")
+#         for name, tensor in external_inputs.items():
+#             if isinstance(tensor, torch.Tensor):
+#                 logger.info(f"[debug]   {name}: {tensor.shape}")
+#             else:
+#                 logger.info(f"[debug]   {name}: {type(tensor)}")
 
-        # Track which subgraphs have been executed
-        executed: set[str] = set()
+#         # Track which subgraphs have been executed
+#         executed: set[str] = set()
 
-        # Execute entrypoints first
-        for entrypoint in self.structure["entrypoint"]:
-            subgraph_name = entrypoint["name"]
-            input_names = entrypoint["inputs"]
+#         # Execute entrypoints first
+#         for entrypoint in self.structure["entrypoint"]:
+#             subgraph_name = entrypoint["name"]
+#             input_names = entrypoint["inputs"]
 
-            logger.info(f"[debug] executing entrypoint {subgraph_name}")
-            for name in input_names:
-                if name in intermediate_results:
-                    tensor = intermediate_results[name]
-                    if isinstance(tensor, torch.Tensor):
-                        logger.info(f"[debug]   input {name}: {tensor.shape}")
-                    else:
-                        logger.info(f"[debug]   input {name}: {type(tensor)}")
+#             logger.info(f"[debug] executing entrypoint {subgraph_name}")
+#             for name in input_names:
+#                 if name in intermediate_results:
+#                     tensor = intermediate_results[name]
+#                     if isinstance(tensor, torch.Tensor):
+#                         logger.info(f"[debug]   input {name}: {tensor.shape}")
+#                     else:
+#                         logger.info(f"[debug]   input {name}: {type(tensor)}")
 
-            # Execute the subgraph with positional arguments
-            module = self.modules[subgraph_name]
-            subgraph_inputs = [intermediate_results[name] for name in input_names]
-            outputs = module(*subgraph_inputs)
+#             # Execute the subgraph with positional arguments
+#             module = self.modules[subgraph_name]
+#             subgraph_inputs = [intermediate_results[name] for name in input_names]
+#             outputs = module(*subgraph_inputs)
 
-            logger.info(f"[debug] entrypoint {subgraph_name} completed")
+#             logger.info(f"[debug] entrypoint {subgraph_name} completed")
 
-            # Store outputs (handle both single and multiple returns)
-            # Find the corresponding DFG node to get output names
-            dfg_node = next(
-                (n for n in self.structure["dfg"] if n["name"] == subgraph_name), None
-            )
-            output_names = dfg_node.get("outpus", []) if dfg_node else []
+#             # Store outputs (handle both single and multiple returns)
+#             # Find the corresponding DFG node to get output names
+#             dfg_node = next(
+#                 (n for n in self.structure["dfg"] if n["name"] == subgraph_name), None
+#             )
+#             output_names = dfg_node.get("outpus", []) if dfg_node else []
 
-            if isinstance(outputs, (list, tuple)):
-                for i, output in enumerate(outputs):
-                    if isinstance(output, torch.Tensor):
-                        logger.info(f"[debug]   output_{i}: {output.shape}")
-                    else:
-                        logger.info(f"[debug]   output_{i}: {type(output)}")
-                    # Store with original node name if available, otherwise use indexed name
-                    key = (
-                        output_names[i]
-                        if i < len(output_names)
-                        else f"{subgraph_name}_output_{i}"
-                    )
-                    intermediate_results[key] = output
-            else:
-                if isinstance(outputs, torch.Tensor):
-                    logger.info(f"[debug]   output_0: {outputs.shape}")
-                else:
-                    logger.info(f"[debug]   output_0: {type(outputs)}")
-                # Store with original node name if available
-                key = output_names[0] if output_names else f"{subgraph_name}_output_0"
-                intermediate_results[key] = outputs
+#             if isinstance(outputs, (list, tuple)):
+#                 for i, output in enumerate(outputs):
+#                     if isinstance(output, torch.Tensor):
+#                         logger.info(f"[debug]   output_{i}: {output.shape}")
+#                     else:
+#                         logger.info(f"[debug]   output_{i}: {type(output)}")
+#                     # Store with original node name if available, otherwise use indexed name
+#                     key = (
+#                         output_names[i]
+#                         if i < len(output_names)
+#                         else f"{subgraph_name}_output_{i}"
+#                     )
+#                     intermediate_results[key] = output
+#             else:
+#                 if isinstance(outputs, torch.Tensor):
+#                     logger.info(f"[debug]   output_0: {outputs.shape}")
+#                 else:
+#                     logger.info(f"[debug]   output_0: {type(outputs)}")
+#                 # Store with original node name if available
+#                 key = output_names[0] if output_names else f"{subgraph_name}_output_0"
+#                 intermediate_results[key] = outputs
 
-            executed.add(subgraph_name)
+#             executed.add(subgraph_name)
 
-        # Execute remaining subgraphs following the DFG
-        max_iterations = len(self.modules) * 2  # Safety limit to prevent infinite loops
-        iteration = 0
+#         # Execute remaining subgraphs following the DFG
+#         max_iterations = len(self.modules) * 2  # Safety limit to prevent infinite loops
+#         iteration = 0
 
-        while len(executed) < len(self.modules) and iteration < max_iterations:
-            iteration += 1
-            found_executable = False
+#         while len(executed) < len(self.modules) and iteration < max_iterations:
+#             iteration += 1
+#             found_executable = False
 
-            for node in self.structure["dfg"]:
-                subgraph_name = node["name"]
+#             for node in self.structure["dfg"]:
+#                 subgraph_name = node["name"]
 
-                if subgraph_name in executed:
-                    continue
+#                 if subgraph_name in executed:
+#                     continue
 
-                # Check if all upstream dependencies are satisfied
-                input_names = node["inputs"]
-                if all(name in intermediate_results for name in input_names):
-                    logger.info(f"[debug] executing {subgraph_name}")
-                    for name in input_names:
-                        if name in intermediate_results:
-                            tensor = intermediate_results[name]
-                            if isinstance(tensor, torch.Tensor):
-                                logger.info(f"[debug]   input {name}: {tensor.shape}")
-                            else:
-                                logger.info(f"[debug]   input {name}: {type(tensor)}")
+#                 # Check if all upstream dependencies are satisfied
+#                 input_names = node["inputs"]
+#                 if all(name in intermediate_results for name in input_names):
+#                     logger.info(f"[debug] executing {subgraph_name}")
+#                     for name in input_names:
+#                         if name in intermediate_results:
+#                             tensor = intermediate_results[name]
+#                             if isinstance(tensor, torch.Tensor):
+#                                 logger.info(f"[debug]   input {name}: {tensor.shape}")
+#                             else:
+#                                 logger.info(f"[debug]   input {name}: {type(tensor)}")
 
-                    # Execute the subgraph with positional arguments
-                    module = self.modules[subgraph_name]
-                    subgraph_inputs = [
-                        intermediate_results[name] for name in input_names
-                    ]
-                    outputs = module(*subgraph_inputs)
+#                     # Execute the subgraph with positional arguments
+#                     module = self.modules[subgraph_name]
+#                     subgraph_inputs = [
+#                         intermediate_results[name] for name in input_names
+#                     ]
+#                     outputs = module(*subgraph_inputs)
 
-                    logger.info(f"[debug] {subgraph_name} completed")
+#                     logger.info(f"[debug] {subgraph_name} completed")
 
-                    # Store outputs
-                    dfg_node = next(
-                        (
-                            n
-                            for n in self.structure["dfg"]
-                            if n["name"] == subgraph_name
-                        ),
-                        None,
-                    )
-                    output_names = dfg_node.get("outpus", []) if dfg_node else []
+#                     # Store outputs
+#                     dfg_node = next(
+#                         (
+#                             n
+#                             for n in self.structure["dfg"]
+#                             if n["name"] == subgraph_name
+#                         ),
+#                         None,
+#                     )
+#                     output_names = dfg_node.get("outpus", []) if dfg_node else []
 
-                    if isinstance(outputs, (list, tuple)):
-                        for i, output in enumerate(outputs):
-                            if isinstance(output, torch.Tensor):
-                                logger.info(f"[debug]   output_{i}: {output.shape}")
-                            else:
-                                logger.info(f"[debug]   output_{i}: {type(output)}")
-                            # Store with original node name if available, otherwise use indexed name
-                            key = (
-                                output_names[i]
-                                if i < len(output_names)
-                                else f"{subgraph_name}_output_{i}"
-                            )
-                            intermediate_results[key] = output
-                    else:
-                        if isinstance(outputs, torch.Tensor):
-                            logger.info(f"[debug]   output_0: {outputs.shape}")
-                        else:
-                            logger.info(f"[debug]   output_0: {type(outputs)}")
-                        # Store with original node name if available
-                        key = (
-                            output_names[0]
-                            if output_names
-                            else f"{subgraph_name}_output_0"
-                        )
-                        intermediate_results[key] = outputs
+#                     if isinstance(outputs, (list, tuple)):
+#                         for i, output in enumerate(outputs):
+#                             if isinstance(output, torch.Tensor):
+#                                 logger.info(f"[debug]   output_{i}: {output.shape}")
+#                             else:
+#                                 logger.info(f"[debug]   output_{i}: {type(output)}")
+#                             # Store with original node name if available, otherwise use indexed name
+#                             key = (
+#                                 output_names[i]
+#                                 if i < len(output_names)
+#                                 else f"{subgraph_name}_output_{i}"
+#                             )
+#                             intermediate_results[key] = output
+#                     else:
+#                         if isinstance(outputs, torch.Tensor):
+#                             logger.info(f"[debug]   output_0: {outputs.shape}")
+#                         else:
+#                             logger.info(f"[debug]   output_0: {type(outputs)}")
+#                         # Store with original node name if available
+#                         key = (
+#                             output_names[0]
+#                             if output_names
+#                             else f"{subgraph_name}_output_0"
+#                         )
+#                         intermediate_results[key] = outputs
 
-                    # Also store by output node names from downstream connections
-                    for downstream in node.get("downstream", []):
-                        for input_mapping in downstream.get("inputs", []):
-                            output_name = input_mapping["output"]
-                            if output_name in intermediate_results:
-                                intermediate_results[input_mapping["input"]] = (
-                                    intermediate_results[output_name]
-                                )
+#                     # Also store by output node names from downstream connections
+#                     for downstream in node.get("downstream", []):
+#                         for input_mapping in downstream.get("inputs", []):
+#                             output_name = input_mapping["output"]
+#                             if output_name in intermediate_results:
+#                                 intermediate_results[input_mapping["input"]] = (
+#                                     intermediate_results[output_name]
+#                                 )
 
-                    executed.add(subgraph_name)
-                    found_executable = True
+#                     executed.add(subgraph_name)
+#                     found_executable = True
 
-            if not found_executable:
-                break
+#             if not found_executable:
+#                 break
 
-        logger.info(f"[debug] execution complete, executed {len(executed)} subgraphs")
+#         logger.info(f"[debug] execution complete, executed {len(executed)} subgraphs")
 
-        # Return the final output from the last executed subgraph
-        # Find the final node (C in this case - the one with empty downstream)
-        for node in self.structure["dfg"]:
-            if not node.get("downstream"):  # Node with no downstream is the final node
-                final_output_names = node.get("outpus", [])
-                if final_output_names:
-                    final_key = final_output_names[0]
-                    if final_key in intermediate_results:
-                        return intermediate_results[final_key]
+#         # Return the final output from the last executed subgraph
+#         # Find the final node (C in this case - the one with empty downstream)
+#         for node in self.structure["dfg"]:
+#             if not node.get("downstream"):  # Node with no downstream is the final node
+#                 final_output_names = node.get("outpus", [])
+#                 if final_output_names:
+#                     final_key = final_output_names[0]
+#                     if final_key in intermediate_results:
+#                         return intermediate_results[final_key]
 
-        # Fallback: return the last output found
-        final_outputs = []
-        for subgraph_name in reversed(sorted(executed)):
-            dfg_node = next(
-                (n for n in self.structure["dfg"] if n["name"] == subgraph_name), None
-            )
-            output_names = dfg_node.get("outpus", []) if dfg_node else []
-            if output_names:
-                for name in output_names:
-                    if name in intermediate_results:
-                        final_outputs.append(intermediate_results[name])
+#         # Fallback: return the last output found
+#         final_outputs = []
+#         for subgraph_name in reversed(sorted(executed)):
+#             dfg_node = next(
+#                 (n for n in self.structure["dfg"] if n["name"] == subgraph_name), None
+#             )
+#             output_names = dfg_node.get("outpus", []) if dfg_node else []
+#             if output_names:
+#                 for name in output_names:
+#                     if name in intermediate_results:
+#                         final_outputs.append(intermediate_results[name])
 
-        return final_outputs[0] if len(final_outputs) == 1 else final_outputs
+#         return final_outputs[0] if len(final_outputs) == 1 else final_outputs
 
-    def save_switchboard(self, output_path: Path) -> None:
-        """Save partition data to a single proprietary directory"""
-        output_path = output_path.with_suffix(".tspartd")
-        output_path.mkdir(parents=True, exist_ok=True)
+#     def save_switchboard(self, output_path: Path) -> None:
+#         """Save partition data to a single proprietary directory"""
+#         output_path = output_path.with_suffix(".tspartd")
+#         output_path.mkdir(parents=True, exist_ok=True)
 
-        json_data, graph_modules = self.structure, self.modules
-        json_path = output_path / "structure.json"
+#         json_data, graph_modules = self.structure, self.modules
+#         json_path = output_path / "structure.json"
 
-        with open(json_path, "w") as f:
-            json.dump(json_data, f, indent=2)
+#         with open(json_path, "w") as f:
+#             json.dump(json_data, f, indent=2)
 
-        for module_id, graph_module in graph_modules.items():
-            module_path = output_path / f"{module_id}.pt"
-            utils.save_graph(graph_module, module_path)
+#         for module_id, graph_module in graph_modules.items():
+#             module_path = output_path / f"{module_id}.pt"
+#             utils.save_graph(graph_module, module_path)
 
-    @staticmethod
-    def load_switchboard(filename: Path) -> "SwitchboardLayout":
-        """Load partition data from a proprietary file (.tspart)."""
-        assertions.file_extension(filename, ".tspartd")
+#     @staticmethod
+#     def load_switchboard(filename: Path) -> "SwitchboardLayout":
+#         """Load partition data from a proprietary file (.tspart)."""
+#         assertions.file_extension(filename, ".tspartd")
 
-        with open(filename / "structure.json", "r") as f:
-            json_data = json.load(f)
+#         with open(filename / "structure.json", "r") as f:
+#             json_data = json.load(f)
 
-        graph_modules = {}
-        for module_file in filename.glob("*.pt"):
-            assertions.file_extension(module_file, ".pt")
-            graph_module = utils.load_graph(module_file)
-            graph_modules[module_file.stem] = graph_module
+#         graph_modules = {}
+#         for module_file in filename.glob("*.pt"):
+#             assertions.file_extension(module_file, ".pt")
+#             graph_module = utils.load_graph(module_file)
+#             graph_modules[module_file.stem] = graph_module
 
-        return SwitchboardLayout(structure=json_data, modules=graph_modules)
+#         return SwitchboardLayout(structure=json_data, modules=graph_modules)
 
 
 class PartitionProvider:
@@ -329,16 +328,13 @@ class PartitionProvider:
                 # or another immediately dominated node
                 source = frozenset([child])
                 next = self.dominance.get_predecessors
-                for node in self._flood_fill_helper(
-                    source, (cut.split | children) - source, next
-                ):
+                for node in self._flood_fill_helper(source, (cut.split | children) - source, next):
                     visited_count[node] += 1
 
             # after we remove "children" from interacted nodes count, we are left with refined "cut.split" nodes
             refined_split: VirtualNodeSet = frozenset(
                 filter(
-                    lambda n: n not in children
-                    and visited_count[n] >= max(len(children) - 1, 2),
+                    lambda n: n not in children and visited_count[n] >= max(len(children) - 1, 2),
                     visited_count.keys(),
                 )
             )
@@ -355,12 +351,8 @@ class PartitionProvider:
 
             # check that split_node and join_node actually have nodes in between
             # we subtract .split and .join to remove the cut nodes themselves
-            candidate_cut = Cut(
-                split=frozenset([split_node]), join=frozenset([join_node])
-            )
-            enclosed_region = (
-                self._get_core_region(candidate_cut) - candidate_cut.split
-            ) - candidate_cut.join
+            candidate_cut = Cut(split=frozenset([split_node]), join=frozenset([join_node]))
+            enclosed_region = (self._get_core_region(candidate_cut) - candidate_cut.split) - candidate_cut.join
 
             if len(enclosed_region) == 0:
                 continue
@@ -385,23 +377,16 @@ class PartitionProvider:
                 assertions.disjoint(succs, cut.join)
                 concrete_split.update(map(VirtualNode.to_concrete, (i for i in succs)))
 
-            concrete_join: ConcreteNodeSet = ConcreteNodeSet(
-                map(VirtualNode.to_concrete, cut.join)
-            )
+            concrete_join: ConcreteNodeSet = ConcreteNodeSet(map(VirtualNode.to_concrete, cut.join))
 
             # remove the join nodes so that our subgraph code actually will return disjoint subgraphs
             # print("[debug]: cut region: ", [n.name for n in cut.split], "→", [n.name for n in cut.join])
             # print("[debug]:     concrete split: ", [n.name for n in concrete_split])
             # print("[debug]:     concrete join: ", [n.name for n in concrete_join])
             # REMINDER: There is no need to substract concrete_split
-            concrete_region = (
-                self._get_enclosed_region(frozenset(concrete_split), concrete_join)
-                - concrete_join
-            )
+            concrete_region = self._get_enclosed_region(frozenset(concrete_split), concrete_join) - concrete_join
             # print("[debug]:     er: ", concrete_region)
-            subgraphs: list[ConcreteNodeSet] = list(
-                self._get_subgraphs(frozenset(concrete_region), self._adjacent)
-            )
+            subgraphs: list[ConcreteNodeSet] = list(self._get_subgraphs(frozenset(concrete_region), self._adjacent))
 
             if len(subgraphs) <= 1:
                 continue
@@ -420,96 +405,77 @@ class PartitionProvider:
                 ),
             )
 
-    def carve_subgraphs(
-        self, selected_partitions: Iterable[Partition]
-    ) -> SwitchboardLayout:
-        remaining_nodes = set(self.torch_graph.execution_order)
-        all_subgraphs = []
-        for partition in selected_partitions:
-            for subgraph in partition.subgraphs:
-                assertions.subset(subgraph.enclosed_region, remaining_nodes)
-                remaining_nodes -= subgraph.enclosed_region
-                all_subgraphs.append(subgraph)
-
-        all_subgraphs += list(
-            Subgraph(
-                inputs=self._subgraph_inputs(sg),
-                outputs=self._subgraph_outputs(sg),
-                enclosed_region=sg,
-            )
-            for sg in self._get_subgraphs(frozenset(remaining_nodes), self._adjacent)
-        )
-
-        return self._create_json(all_subgraphs)
-
-    def _create_json(self, all_subgraphs: list[Subgraph]) -> SwitchboardLayout:
+    def create_switchboard(self, selected_partitions: Iterable[Partition]) -> Switchboard:
         """Transform all_subgraphs list into nested hierarchical structure."""
 
-        graph_modules: dict[str, fx.GraphModule] = {
-            str(chr(ord("A") + idx)): utils.extract_subgraph(
-                self.torch_graph.graph_module,
-                list(
-                    map(
-                        self.torch_graph.to_fx,
-                        self.torch_graph.sort_execution_order(subgraph.enclosed_region),
-                    )
-                ),
-                list(map(self.torch_graph.to_fx, subgraph.inputs)),
-                list(map(self.torch_graph.to_fx, subgraph.outputs)),
+        all_subgraphs = list(self._carve_subgraphs(selected_partitions))
+        idx2char = [str(chr(ord("A") + idx)) for idx, _ in enumerate(all_subgraphs)]
+
+        to_fx = self.torch_graph.to_fx
+        mod = self.torch_graph.graph_module
+        sort = self.torch_graph.sort_execution_order
+
+        components: dict[ComponentName, fx.GraphModule] = {
+            idx2char[idx]: utils.extract_subgraph(
+                mod,
+                list(map(to_fx, sort(subgraph.enclosed_region))),
+                list(map(to_fx, subgraph.inputs)),
+                list(map(to_fx, subgraph.outputs)),
             )
             for idx, subgraph in enumerate(all_subgraphs)
         }
 
-        id_to_char = {
-            id(sg): str(chr(ord("A") + idx)) for idx, sg in enumerate(all_subgraphs)
+        for x in components.values():
+            print("preexport code")
+            print(x.code)
+
+        metadata: dict[ComponentName, ComponentMetadata] = {
+            idx2char[idx]: ComponentMetadata(
+                name=idx2char[idx],
+                version_hash=utils.hash_model_architecture(components[idx2char[idx]]),
+                input_parameters=tuple(map(lambda n: n.name, subgraph.inputs)),
+                output_parameters=tuple(map(lambda n: n.name, subgraph.outputs)),
+            )
+            for idx, subgraph in enumerate(all_subgraphs)
         }
 
-        # Build entrypoint section - subgraphs with no producers
-        entrypoint = []
-        dfg = []
-
-        for producer in all_subgraphs:
-            # Check if this subgraph has any producers
-            has_producer = any(
-                len(producer.inputs & candidate.outputs) > 0
+        entrypoints: list[Entrypoint] = [
+            Entrypoint(name=idx2char[idx])
+            for idx, producer in enumerate(all_subgraphs)
+            if not any(
+                len(set(producer.inputs) & set(candidate.outputs)) > 0
                 for candidate in all_subgraphs
                 if candidate != producer
             )
-
-            if not has_producer:
-                entrypoint.append(
-                    {
-                        "name": id_to_char[id(producer)],
-                        "inputs": list(map(lambda n: n.name, producer.inputs)),
-                    }
-                )
-
-        # Build DFG section - all subgraphs with their downstream connections
-        dfg = [
-            {
-                "name": id_to_char[id(producer)],
-                "inputs": list(map(lambda n: n.name, producer.inputs)),
-                "outpus": list(map(lambda n: n.name, producer.outputs)),
-                "downstream": [
-                    {
-                        "to": id_to_char[id(consumer)],
-                        "inputs": list(
-                            [
-                                {"output": inp.name, "input": inp.name}
-                                for inp in consumer.inputs & producer.outputs
-                            ]
-                        ),
-                    }
-                    for consumer in all_subgraphs
-                    if len(consumer.inputs & producer.outputs) > 0
-                ],
-            }
-            for producer in all_subgraphs
         ]
 
-        structure = {"entrypoint": entrypoint, "dfg": dfg}
+        dfg = {
+            idx2char[pidx]: [
+                DownstreamNode(name=idx2char[cidx], mapping=[(c.name, c.name) for c in common])
+                for cidx, consumer in enumerate(all_subgraphs)
+                if len(common := set(consumer.inputs) & set(producer.outputs)) > 0
+            ]
+            for pidx, producer in enumerate(all_subgraphs)
+        }
 
-        return SwitchboardLayout(structure=structure, modules=graph_modules)
+        return Switchboard(
+            layout=SwitchboardLayout(metadata=metadata, entrypoints=entrypoints, dfg=dfg), components=components
+        )
+
+    def _carve_subgraphs(self, selected_partitions: Iterable[Partition]) -> Iterable[Subgraph]:
+        remaining_nodes = set(self.torch_graph.execution_order)
+        for partition in selected_partitions:
+            for subgraph in partition.subgraphs:
+                assertions.subset(subgraph.enclosed_region, remaining_nodes)
+                remaining_nodes -= subgraph.enclosed_region
+                yield subgraph
+
+        for sg in self._get_subgraphs(frozenset(remaining_nodes), self._adjacent):
+            yield Subgraph(
+                inputs=self._subgraph_inputs(sg),
+                outputs=self._subgraph_outputs(sg),
+                enclosed_region=sg,
+            )
 
     # [debug]: cut region:  ['hidden_states_51'] → ['hidden_states_63']
     def _adjacent(self, node: ConcreteNode) -> frozenset[ConcreteNode]:
@@ -519,13 +485,9 @@ class PartitionProvider:
         #     print("[debug]: getting adjacent for mask", a)
         #     print("[debug]: getting adjacent for mask", b)
         #     print("[debug]: getting adjacent for mask", a.union(b))
-        return self.torch_graph.get_successors(node).union(
-            self.torch_graph.get_predecessors(node)
-        )
+        return self.torch_graph.get_successors(node).union(self.torch_graph.get_predecessors(node))
 
-    def _get_subgraphs(
-        self, node_set: frozenset[T], adjacent: Callable[[T], frozenset[T]]
-    ) -> Iterable[frozenset[T]]:
+    def _get_subgraphs(self, node_set: frozenset[T], adjacent: Callable[[T], frozenset[T]]) -> Iterable[frozenset[T]]:
         """Return all disjoint subgraphs in the given node set. Node set must be a subset of the range of adjacent().
 
         Note: all return values from adjacent() are filtered to be within node_set. adjacent() must return all the node
@@ -553,9 +515,7 @@ class PartitionProvider:
         """Return all single code cuts (A, B) where A dominates B and B post-dominates A."""
 
         def lazy_iterable():
-            for node_a, node_b in itertools.combinations(
-                self.dominance.ordered_nodes(), 2
-            ):
+            for node_a, node_b in itertools.combinations(self.dominance.ordered_nodes(), 2):
                 is_d = node_a in self.dominance.dominators(node_b)
                 is_p = node_b in self.dominance.post_dominators(node_a)
                 if is_d and is_p:
@@ -563,9 +523,7 @@ class PartitionProvider:
 
         return frozenset(lazy_iterable())
 
-    def _get_enclosed_region(
-        self, source: ConcreteNodeSet, sink: ConcreteNodeSet
-    ) -> ConcreteNodeSet:
+    def _get_enclosed_region(self, source: ConcreteNodeSet, sink: ConcreteNodeSet) -> ConcreteNodeSet:
         """Get the region between source and sink nodes, **including** parameter nodes. Parameter nodes
         are constexpr-foldable. source node and sink node are included in the region."""
 
@@ -575,18 +533,14 @@ class PartitionProvider:
             elif n in sink:
                 return self.torch_graph.get_predecessors(n)
             else:
-                return self.torch_graph.get_successors(n).union(
-                    self.torch_graph.get_predecessors(n)
-                )
+                return self.torch_graph.get_successors(n).union(self.torch_graph.get_predecessors(n))
 
         return self._flood_fill_helper(source, sink, next)
 
     def _get_core_region(self, cut: Cut) -> VirtualNodeSet:
         """Get the region between source and sink nodes, not including parameter nodes. Parameter nodes
         are constexpr-foldable. source node and sink node are included in the region."""
-        return self._flood_fill_helper(
-            cut.join, cut.split, self.dominance.get_successors
-        )
+        return self._flood_fill_helper(cut.join, cut.split, self.dominance.get_successors)
 
     def _flood_fill_helper(
         self,
@@ -799,7 +753,7 @@ class PartitionProvider:
 
     # #         return max_avg_memory_bytes, max_std_memory_bytes
 
-    def _subgraph_inputs(self, subgraph_nodes: ConcreteNodeSet) -> ConcreteNodeSet:
+    def _subgraph_inputs(self, subgraph_nodes: ConcreteNodeSet) -> tuple[ConcreteNode, ...]:
         """Nodes whose predecessors include at least one outside the subgraph."""
         ret = set()
 
@@ -818,12 +772,14 @@ class PartitionProvider:
                     # must not be a parameter node
                     ret.add(pred)
 
-        return frozenset(ret)
+        # we should return in a deterministic order
+        return tuple(sorted(ret, key=lambda x: x.name))
 
-    def _subgraph_outputs(self, subgraph_nodes: ConcreteNodeSet) -> ConcreteNodeSet:
+    def _subgraph_outputs(self, subgraph_nodes: ConcreteNodeSet) -> tuple[ConcreteNode, ...]:
         """Nodes with no successors in the subgraph."""
-        return frozenset(
-            n
-            for n in subgraph_nodes
-            if not (self.torch_graph.get_successors(n) & subgraph_nodes)
+        return tuple(
+            sorted(
+                [n for n in subgraph_nodes if not (self.torch_graph.get_successors(n) & subgraph_nodes)],
+                key=lambda x: x.name,
+            )
         )

@@ -64,6 +64,7 @@ def extract_subgraph(
     if not added_output:
         new_graph.output([env[output.name] for output in o])
     new_gm = fx.GraphModule(gm, new_graph)
+    new_gm.eval()
     new_gm.graph.eliminate_dead_code()
     new_gm.recompile()
     new_gm.graph.lint()
