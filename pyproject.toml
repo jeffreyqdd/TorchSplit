@@ -1,12 +1,17 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "torch-split"
 version = "0.1.0"
-description = "PyTorch model analysis and splitting tool"
+description = "PyTorch model analysis, splitting tool, and serving framework"
 requires-python = ">=3.12,<3.14"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
 
 dependencies = [
     "frozendict>=2.4.6",
@@ -23,11 +28,13 @@ dependencies = [
 typing = ["types-frozendict"]
 
 [project.scripts]
-torchsplit = "torch_split.src.torchsplit:main"
+torchsplit = "torch_split.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["torch_split*"]
+[tool.maturin]
+features = ["pyo3/extension-module"]
+# This tells maturin where the python package is located
+python-source = "."
+module-name = "torch_split._rust_backend"
 
 [tool.ruff]
 line-length = 120

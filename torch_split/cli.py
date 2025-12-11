@@ -7,12 +7,12 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import torch_split.lib.client as client
-import torch_split.lib.log as logging
-import torch_split.lib.ir as ir
-import torch_split.lib.profiling.annotators as annotators
-import torch_split.lib.utils as utils
-from torch_split.lib.partition import provider, solver
+import torch_split.interface as client
+import torch_split.compiler.log as logging
+import torch_split.compiler.ir as ir
+import torch_split.compiler.profiling.annotators as annotators
+import torch_split.compiler.utils as utils
+from torch_split.compiler.partition import provider, solver
 
 sys.path.insert(0, ".")
 

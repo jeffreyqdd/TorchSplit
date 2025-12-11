@@ -1,0 +1,15 @@
+[package]
+name = "torch-split"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "_rust_backend"
+crate-type = ["cdylib"]
+path = "rust/lib.rs"
+
+[dependencies]
+pyo3 = { version = "0.20.0", features = ["extension-module"] }
+numpy = "0.20.0"
+ctor = "0.6.3"
+opentelemetry = "0.31.0"
