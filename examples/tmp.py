@@ -17,7 +17,7 @@ from transformers import (
 from torch_split.lib.client import SplitClient
 from torch_split.lib.switchboard import Switchboard
 
-x = Switchboard.load(Path("/dev/shm/switchboard.tspartd"))
+x = Switchboard.load(Path("switchboard.tspartd"))
 for name, mod in x.components.items():
     mod.eval()
     print(f"--- Component {name} code ---")

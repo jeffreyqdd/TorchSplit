@@ -425,9 +425,9 @@ class PartitionProvider:
             for idx, subgraph in enumerate(all_subgraphs)
         }
 
-        for x in components.values():
-            print("preexport code")
-            print(x.code)
+        # for x in components.values():
+        #     print("preexport code")
+        #     print(x.code)
 
         metadata: dict[ComponentName, ComponentMetadata] = {
             idx2char[idx]: ComponentMetadata(

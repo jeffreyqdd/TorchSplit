@@ -6,19 +6,17 @@ build-backend = "setuptools.build_meta"
 name = "torch-split"
 version = "0.1.0"
 description = "PyTorch model analysis and splitting tool"
-requires-python = ">=3.9"
+requires-python = ">=3.12,<3.14"
 
 dependencies = [
-    "torch>=2.8.0",
     "frozendict>=2.4.6",
-    "graphviz>=0.21.0",
-    "opentelemetry-api>=1.37.0",
-    "opentelemetry-sdk>=1.37.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.37.0",
-    "pydantic>=2.12.0",
-    "msgpack>=1.1.2",
-    "rich>=14.2.0",
-    "unionfind>=0.2.1",
+    "torch (>=2.9.1,<3.0.0)",
+    "torchvision (>=0.24.1,<0.25.0)",
+    "graphviz (>=0.21,<0.22)",
+    "pillow (>=12.0.0,<13.0.0)",
+    "numpy (>=2.3.5,<3.0.0)",
+    "rich (>=14.2.0,<15.0.0)",
+    "transformers (>=4.57.3,<5.0.0)",
 ]
 
 [project.optional-dependencies]

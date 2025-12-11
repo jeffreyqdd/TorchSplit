@@ -182,7 +182,7 @@ def main():
 
         selected_partitions = [all_partitions[0]]
         layout = provider_partition.create_switchboard(selected_partitions)
-        layout.save(Path("/dev/shm/switchboard.tmp"))
+        layout.save(Path("switchboard.tmp"))
         # print(json.dumps(final, indent=2))
         # for id, d in data.items():
         #     print("------------------")
