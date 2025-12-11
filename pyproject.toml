@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "torch-split"
 version = "0.1.0"
 description = "PyTorch model analysis, splitting tool, and serving framework"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.13"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -22,6 +22,10 @@ dependencies = [
     "numpy (>=2.3.5,<3.0.0)",
     "rich (>=14.2.0,<15.0.0)",
     "transformers (>=4.57.3,<5.0.0)",
+    "opentelemetry-api (>=1.39.1,<2.0.0)",
+    "opentelemetry-sdk (>=1.39.1,<2.0.0)",
+    "pydantic (>=2.12.5,<3.0.0)",
+    "opentelemetry-exporter-otlp (>=1.39.1,<2.0.0)",
 ]
 
 [project.optional-dependencies]
@@ -38,3 +42,6 @@ module-name = "torch_split._rust_backend"
 
 [tool.ruff]
 line-length = 120
+
+[dependency-groups]
+dev = ["maturin (>=1.10.2,<2.0.0)"]

@@ -4,6 +4,7 @@ import argparse
 import importlib
 import json
 import sys
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,125 +108,185 @@ def assert_model_cache(model_spec: ModelSpec, no_cache: bool = False):
         yield bs, profiling_data, device_data
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Torch Split CLI")
+def load_split_interface(c: str) -> client.SplitClient:
+    module_path, class_name = c.split(":")
+    module_path = module_path.replace("/", ".").rstrip(".py").lstrip(".")
+    logger.info("loading client %s:%s", module_path, class_name)
+
+    try:
+        module = importlib.import_module(module_path)
+        return getattr(module, class_name)()
+
+    except Exception:
+        logger.exception("failed to load SplitClient '%s:%s'", module_path, class_name)
+        sys.exit(1)
+
+    #     model = split_client.get_model()
+    #     model_name = model.__class__.__name__
+    #     model_hash = utils.hash_model_architecture(model)
+    #     model_cache_directory = Path(program_args.cache) / model_name / model_hash
+
+    #     target_models[model_name] = ModelSpec(
+    #         name=model_name,
+    #         hash=model_hash,
+    #         cache_directory=model_cache_directory,
+    #         split_client=split_client,
+    #     )
+
+    #     logger.info(
+    #         "model [cyan]%s[/] [dim](hash %s...)[/]\nmodel cache directory [dim](%s...)[/]",
+    #         model_name,
+    #         model_hash[:12],
+    #         str(model_cache_directory)[:40],
+    #     )
+
+
+def export_fun(program_args: argparse.Namespace):
+    if not program_args.o.endswith(".tspartd"):
+        print("output path must have .tspartd extension")
+        sys.exit(1)
+
+    batch_size: int = program_args.b
+    output_dir = Path(program_args.o)
+    split_interface = load_split_interface(program_args.model)
+
+    model = split_interface.get_model()
+    model_name = model.__class__.__name__
+    model_hash = utils.hash_model_architecture(model)
+
+    logger.info("model [cyan]%s[/] [dim](hash %s...)[/] batch size = %d", model_name, model_hash[:12], batch_size)
+    _a, _b, generator = split_interface.get_benchmarks(batch_size)
+    args, kwargs = next(generator)
+
+    gm = utils.capture_graph(model)(*args, **kwargs)
+    tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
+    pp = provider.PartitionProvider(tg)
+    ap = sorted(pp.all_partitions(), key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
+    sb = pp.create_switchboard([ap[0]])
+    logger.info("exporting switchboard to %s", str(output_dir))
+    sb.save(output_dir)
+
+
+def export_parser(parser: argparse.ArgumentParser):
+    # check if on linux
+    if sys.platform == "linux" or sys.platform == "linux2":
+        default_path = "/dev/shm/switchboard.tspartd"
+    else:
+        default_path = f"{os.getcwd()}/switchboard.tspartd"
+    parser.add_argument(
+        "-b",
+        type=int,
+        default=1,
+        help="batch size to use for export (default=1)",
+    )
+    parser.add_argument(
+        "-o",
+        type=str,
+        default=default_path,
+        help=f"output directory for the exported switchboard (default={default_path})",
+    )
     parser.add_argument(
         "model",
         type=str,
         help="Path to TorchSplitClient interface instance e.g. './src/main.py:client'",
-        nargs="+",
     )
-    parser.add_argument(
-        "-c",
-        "--cache",
-        type=str,
-        default=".ts_bin",
-        help="output path for artifacts and cache",
-    )
-    parser.add_argument(
-        "-d",
-        "--dataflow",
-        action="store_true",
-        help="render visualization of dataflow graph in the output path",
-    )
-    parser.add_argument(
-        "--no-cache",
-        action="store_true",
-        help="disable caching of model architecture hash",
-    )
+    parser.set_defaults(func=export_fun)
+
+
+def profile_parser(parser: argparse.ArgumentParser):
+    pass
+
+
+def main():
+    parser = argparse.ArgumentParser(description="torchsplit cli")
+    subparser = parser.add_subparsers(dest="command", required=True)
+    export_parser(subparser.add_parser("export", help="export a model to a switchboard"))
+    profile_parser(subparser.add_parser("profile", help="profile a model"))
+
     program_args = parser.parse_args()
+    program_args.func(program_args)
 
-    # Resolve and load user-provided SplitClients
-    target_models: dict[str, ModelSpec] = {}
-
-    for split_client_spec in program_args.model:
-        module_path, class_name = split_client_spec.split(":")
-        module_path = module_path.replace("/", ".").rstrip(".py").lstrip(".")
-        logger.info("loading client %s:%s", module_path, class_name)
-
-        try:
-            module = importlib.import_module(module_path)
-            split_client: client.SplitClient = getattr(module, class_name)()
-        except Exception:
-            logger.exception("failed to load SplitClient '%s:%s'", module_path, class_name)
-            sys.exit(1)
-
-        model = split_client.get_model()
-        model_name = model.__class__.__name__
-        model_hash = utils.hash_model_architecture(model)
-        model_cache_directory = Path(program_args.cache) / model_name / model_hash
-
-        target_models[model_name] = ModelSpec(
-            name=model_name,
-            hash=model_hash,
-            cache_directory=model_cache_directory,
-            split_client=split_client,
-        )
-
-        logger.info(
-            "model [cyan]%s[/] [dim](hash %s...)[/]\nmodel cache directory [dim](%s...)[/]",
-            model_name,
-            model_hash[:12],
-            str(model_cache_directory)[:40],
-        )
-
-    partitions: dict[str, tuple[ModelSpec, provider.PartitionProvider]] = {}
-    for model_name, model_spec in target_models.items():
-        split_client = model_spec.split_client
-        a, b, generator = split_client.get_benchmarks(split_client.batch_sizes()[0])
-        args, kwargs = next(generator)
-        gm = utils.capture_graph(split_client.get_model())(*args, **kwargs)
-        tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
-        provider_partition = provider.PartitionProvider(tg)
-        all_partitions = provider_partition.all_partitions()
-        all_partitions = sorted(all_partitions, key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
-
-        selected_partitions = [all_partitions[0]]
-        layout = provider_partition.create_switchboard(selected_partitions)
-        layout.save(Path("switchboard.tmp"))
-        # print(json.dumps(final, indent=2))
-        # for id, d in data.items():
-        #     print("------------------")
-        #     print(id)
-        #     print(d.code)
-
-        # for p in all_partitions[:1]:
-        #     print("cut: ", [n.name for n in p.cut.split], "→", [n.name for n in p.cut.join])
-        #     print("  subgraphs count: ", len(p.subgraphs))
-        #     for idx, subgraph in enumerate(p.subgraphs, 1):
-        #         print(f"  Subgraph {idx}:")
-        #         print("      inputs: ", [n.name for n in subgraph.inputs])
-        #         print("      outputs: ", [n.name for n in subgraph.outputs])
-        #         print("      enclosed region: ", len(subgraph.enclosed_region))
-        #     print()
-
-        if program_args.dataflow:
-            output_dir = model_spec.cache_directory
-            provider_partition.visualize_dataflow(output_dir / "visualizations", True)
-        # for bs, profiling_data, device_data in assert_model_cache(
-        #     model_spec, program_args.no_cache
-        # ):
-        #     tg.annotate_with_profiling_data(bs, profiling_data, device_data)
-
-        # partitions[model_name] = (model_spec, provider.PartitionProvider(tg))
-
-    # if program_args.dataflow:
-    #     for partition in partitions.values():
-    #         output_dir = partition[0].cache_directory
-    #         partition[1].visualize_dataflow(output_dir / "visualizations", True)
-
-    # solver.solve(list(map(lambda x: x[1], partitions.values())))
-
-    # # run partitioning
-    # with logging.timed_execution("solve partitioning problem", logger=logger):
-    #     solutions = partition_provider.solve_partitioning_problem()
-    # logger.info(
-    #     "[bold]Done[/] found %d candidate partition(s)",
-    #     len(solutions) if solutions is not None else 0,
     # )
-    # # torch_graph_dict: dict[int, core.TorchGraph] = {}
-    # # device_dict: dict[int, str] = {}
-    # # profiling_dict: dict[int, str] = {}
+    # parser.add_argument(
+    #     "-c",
+    #     "--cache",
+    #     type=str,
+    #     default=".ts_bin",
+    #     help="output path for artifacts and cache",
+    # )
+    # parser.add_argument(
+    #     "-d",
+    #     "--dataflow",
+    #     action="store_true",
+    #     help="render visualization of dataflow graph in the output path",
+    # )
+    # parser.add_argument(
+    #     "--no-cache",
+    #     action="store_true",
+    #     help="disable caching of model architecture hash",
+    # )
+    # program_args = parser.parse_args()
+
+    # # Resolve and load user-provided SplitClients
+    # target_models: dict[str, ModelSpec] = {}
+
+    # partitions: dict[str, tuple[ModelSpec, provider.PartitionProvider]] = {}
+    # for model_name, model_spec in target_models.items():
+    #     split_client = model_spec.split_client
+    #     a, b, generator = split_client.get_benchmarks(split_client.batch_sizes()[0])
+    #     args, kwargs = next(generator)
+    #     gm = utils.capture_graph(split_client.get_model())(*args, **kwargs)
+    #     tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
+    #     provider_partition = provider.PartitionProvider(tg)
+    #     all_partitions = provider_partition.all_partitions()
+    #     all_partitions = sorted(all_partitions, key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
+
+    #     selected_partitions = [all_partitions[0]]
+    #     layout = provider_partition.create_switchboard(selected_partitions)
+    #     layout.save(Path("switchboard.tmp"))
+    #     # print(json.dumps(final, indent=2))
+    #     # for id, d in data.items():
+    #     #     print("------------------")
+    #     #     print(id)
+    #     #     print(d.code)
+
+    #     # for p in all_partitions[:1]:
+    #     #     print("cut: ", [n.name for n in p.cut.split], "→", [n.name for n in p.cut.join])
+    #     #     print("  subgraphs count: ", len(p.subgraphs))
+    #     #     for idx, subgraph in enumerate(p.subgraphs, 1):
+    #     #         print(f"  Subgraph {idx}:")
+    #     #         print("      inputs: ", [n.name for n in subgraph.inputs])
+    #     #         print("      outputs: ", [n.name for n in subgraph.outputs])
+    #     #         print("      enclosed region: ", len(subgraph.enclosed_region))
+    #     #     print()
+
+    #     if program_args.dataflow:
+    #         output_dir = model_spec.cache_directory
+    #         provider_partition.visualize_dataflow(output_dir / "visualizations", True)
+    #     # for bs, profiling_data, device_data in assert_model_cache(
+    #     #     model_spec, program_args.no_cache
+    #     # ):
+    #     #     tg.annotate_with_profiling_data(bs, profiling_data, device_data)
+
+    #     # partitions[model_name] = (model_spec, provider.PartitionProvider(tg))
+
+    # # if program_args.dataflow:
+    # #     for partition in partitions.values():
+    # #         output_dir = partition[0].cache_directory
+    # #         partition[1].visualize_dataflow(output_dir / "visualizations", True)
+
+    # # solver.solve(list(map(lambda x: x[1], partitions.values())))
+
+    # # # run partitioning
+    # # with logging.timed_execution("solve partitioning problem", logger=logger):
+    # #     solutions = partition_provider.solve_partitioning_problem()
+    # # logger.info(
+    # #     "[bold]Done[/] found %d candidate partition(s)",
+    # #     len(solutions) if solutions is not None else 0,
+    # # )
+    # # # torch_graph_dict: dict[int, core.TorchGraph] = {}
+    # # # device_dict: dict[int, str] = {}
+    # # # profiling_dict: dict[int, str] = {}
 
 
 if __name__ == "__main__":

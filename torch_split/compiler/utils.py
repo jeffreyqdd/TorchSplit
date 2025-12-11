@@ -2,7 +2,7 @@ import hashlib
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Optional, cast
 
 import torch
 import torch._dynamo as dynamo
@@ -10,8 +10,8 @@ import torch._dynamo.exc as dynamo_exc
 import torch.fx as fx
 import torch.nn as nn
 
-import torch_split.lib.assertions as assertions
-import torch_split.lib.log as logging
+import torch_split.compiler.assertions as assertions
+import torch_split.compiler.log as logging
 
 
 def capture_graph(m: nn.Module) -> Callable[..., fx.GraphModule]:
