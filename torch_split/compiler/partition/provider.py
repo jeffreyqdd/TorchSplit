@@ -3,14 +3,14 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 import graphviz  # type: ignore
 import torch.fx as fx
 
-import torch_split.lib.assertions as assertions
-import torch_split.lib.log as logging
-from torch_split.lib.switchboard import (
+import torch_split.compiler.assertions as assertions
+import torch_split.compiler.log as logging
+from torch_split.compiler.switchboard import (
     Switchboard,
     ComponentMetadata,
     ComponentName,
@@ -18,9 +18,9 @@ from torch_split.lib.switchboard import (
     DownstreamNode,
     SwitchboardLayout,
 )
-import torch_split.lib.utils as utils
-from torch_split.lib.ir import ConcreteNode, TorchGraph
-from torch_split.lib.partition.dominance import DominanceInformation, VirtualNode
+import torch_split.compiler.utils as utils
+from torch_split.compiler.ir import ConcreteNode, TorchGraph
+from torch_split.compiler.partition.dominance import DominanceInformation, VirtualNode
 
 logger = logging.get_logger(__name__)
 
@@ -405,8 +405,58 @@ class PartitionProvider:
                 ),
             )
 
-    def create_switchboard(self, selected_partitions: Iterable[Partition]) -> Switchboard:
-        """Transform all_subgraphs list into nested hierarchical structure."""
+    def create_switchboard(
+        self, selected_partitions: Iterable[Partition], roots: Optional["PartitionProvider"] = None
+    ) -> Switchboard:
+        if roots is not None:
+            curr_tg = self.torch_graph
+            root_tg = roots.torch_graph
+
+            if len(curr_tg.execution_order) != len(root_tg.execution_order):
+                raise ValueError("Number of nodes is not the same between current and root TorchGraph")
+
+            for curr_node, root_node in zip(curr_tg.execution_order, root_tg.execution_order):
+                if curr_node.name != root_node.name:
+                    raise ValueError("Execution order does not match between current and root TorchGraph")
+
+            curr_ordered_virtual = list(self.dominance.ordered_nodes())
+            root_ordered_virtual = list(roots.dominance.ordered_nodes())
+
+            if len(curr_ordered_virtual) != len(root_ordered_virtual):
+                raise ValueError("Number of virtual nodes is not the same between current and root TorchGraph")
+            for curr_node, root_node in zip(curr_ordered_virtual, root_ordered_virtual):
+                if curr_node.name != root_node.name:
+                    raise ValueError("Virtual node order does not match between current and root TorchGraph")
+
+            uid_map: dict[ConcreteNode, ConcreteNode] = {
+                root_node: curr_node for curr_node, root_node in zip(curr_tg.execution_order, root_tg.execution_order)
+            }
+
+            vid_map: dict[VirtualNode, VirtualNode] = {
+                root_node: curr_node
+                for curr_node, root_node in zip(self.dominance.ordered_nodes(), roots.dominance.ordered_nodes())
+            }
+
+            def map_from_root(subgraph: Subgraph) -> Subgraph:
+                return Subgraph(
+                    inputs=tuple(uid_map[n] for n in subgraph.inputs),
+                    outputs=tuple(uid_map[n] for n in subgraph.outputs),
+                    enclosed_region=frozenset(uid_map[n] for n in subgraph.enclosed_region),
+                )
+
+            def map_from_root_virtual(cut: Cut) -> Cut:
+                return Cut(
+                    split=frozenset(vid_map[n] for n in cut.split),
+                    join=frozenset(vid_map[n] for n in cut.join),
+                )
+
+            selected_partitions = map(
+                lambda p: Partition(
+                    cut=map_from_root_virtual(p.cut),
+                    subgraphs=frozenset(map(map_from_root, p.subgraphs)),
+                ),
+                selected_partitions,
+            )
 
         all_subgraphs = list(self._carve_subgraphs(selected_partitions))
         idx2char = [str(chr(ord("A") + idx)) for idx, _ in enumerate(all_subgraphs)]

@@ -13,7 +13,7 @@ from transformers import (
     AutoImageProcessor,
 )
 
-from torch_split.lib.client import SplitClient
+from torch_split.interface import SplitClient
 
 
 def with_hint(x):
@@ -106,9 +106,7 @@ class ToyInterface(SplitClient):
 
     def get_benchmarks(
         self, batch_size: int
-    ) -> tuple[
-        int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]
-    ]:
+    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
         def get_example_inputs(bs: int):
             while True:
                 yield (torch.randn(bs, 100).to(self.device),), {}
@@ -155,15 +153,10 @@ class ClipInterface(SplitClient):
 
     def get_benchmarks(
         self, batch_size: int
-    ) -> tuple[
-        int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]
-    ]:
+    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
         def get_example_inputs(bs: int):
             while True:
-                img = [
-                    Image.new("RGB", (224, 224), color=(255, 255, 255))
-                    for _ in range(bs)
-                ]
+                img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(bs)]
                 texts = [f"a plain white square {i}" for i in range(bs)]
                 enc = self.processor(
                     images=img,
@@ -219,9 +212,7 @@ class ComplicatedInterface(SplitClient):
 
     def get_benchmarks(
         self, batch_size: int
-    ) -> tuple[
-        int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]
-    ]:
+    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
         def get_example_inputs(bs: int):
             while True:
                 yield (torch.randn(bs, 100).to(self.device),), {}
@@ -240,14 +231,10 @@ class PreFLMRImageProcessor:
 
         self.transform = transforms.Compose(
             [
-                transforms.Resize(
-                    256, interpolation=transforms.InterpolationMode.BICUBIC
-                ),
+                transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
                 transforms.CenterCrop(size),
                 transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ]
         )
 
@@ -296,15 +283,10 @@ class PreFLMRInterface(SplitClient):
 
     def get_benchmarks(
         self, batch_size: int
-    ) -> tuple[
-        int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]
-    ]:
+    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
         def get_example_inputs(bs: int):
             while True:
-                img = [
-                    Image.new("RGB", (224, 224), color=(255, 255, 255))
-                    for _ in range(bs)
-                ]
+                img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(bs)]
                 enc = self.processor(img)
                 yield (), enc
 
