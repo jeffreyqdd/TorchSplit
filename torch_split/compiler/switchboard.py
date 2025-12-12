@@ -67,6 +67,8 @@ class Switchboard:
         for name, meta in layout.metadata.items():
             assert name == meta.name, "should never fail"
             components[name] = utils.load_graph(path / f"{name}.pt")
+            components[name].eval()
+            components[name].compile()
 
             # validate hashes
             component_hash = utils.hash_model_architecture(components[name])
