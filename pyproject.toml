@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "torch-split"
 version = "0.1.0"
 description = "PyTorch model analysis, splitting tool, and serving framework"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.10,<3.11"
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
@@ -15,22 +15,28 @@ classifiers = [
 
 dependencies = [
     "frozendict>=2.4.6",
-    "torch (>=2.9.1,<3.0.0)",
-    "torchvision (>=0.24.1,<0.25.0)",
     "graphviz (>=0.21,<0.22)",
     "pillow (>=12.0.0,<13.0.0)",
-    "numpy (>=2.3.5,<3.0.0)",
     "rich (>=14.2.0,<15.0.0)",
-    "transformers (>=4.57.3,<5.0.0)",
     "opentelemetry-api (>=1.39.1,<2.0.0)",
     "opentelemetry-sdk (>=1.39.1,<2.0.0)",
     "pydantic (>=2.12.5,<3.0.0)",
     "opentelemetry-exporter-otlp (>=1.39.1,<2.0.0)",
-    "pynvml (>=13.0.1,<14.0.0)",
     "psutil (>=7.1.3,<8.0.0)",
     "prometheus-client (>=0.23.1,<0.24.0)",
     "opentelemetry-exporter-prometheus (>=0.60b1,<0.61)",
+    "transformers (==4.35.2)",
+    "torch (>=2.9.1,<3.0.0)",
+    "torchvision (>=0.24.1,<0.25.0)",
+    "numpy (<2.0)",
+    "datasets (>=4.4.1,<5.0.0)",
+    "nvidia-ml-py (>=13.590.44,<14.0.0)",
+    "tqdm (>=4.67.1,<5.0.0)",
 ]
+
+[tool.poetry.group.flmr.dependencies]
+flmr = { git = "https://github.com/LinWeizheDragon/FLMR.git", branch = "main", develop = true }
+colbert-ai = { git = "https://github.com/stanford-futuredata/ColBERT.git", branch = "main", develop = true }
 
 [project.optional-dependencies]
 typing = ["types-frozendict"]
@@ -49,3 +55,6 @@ line-length = 120
 
 [dependency-groups]
 dev = ["maturin (>=1.10.2,<2.0.0)"]
+"=flmr" = [
+    "easydict (>=1.13,<2.0)"
+]

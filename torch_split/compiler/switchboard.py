@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import torch.fx as fx
 from pydantic import BaseModel
@@ -56,7 +57,7 @@ class Switchboard:
             utils.save_graph(graph_module, module_path)
 
     @staticmethod
-    def load(path: Path) -> "Switchboard":
+    def load(path: Path, load_only: Optional[list[str]] = None) -> "Switchboard":
         """load a switchboard from the given path"""
         assertions.file_extension(path, ".tspartd")
 
@@ -65,10 +66,12 @@ class Switchboard:
 
         components: dict[ComponentName, fx.GraphModule] = {}
         for name, meta in layout.metadata.items():
+            if load_only is not None and name not in load_only:
+                continue
             assert name == meta.name, "should never fail"
             components[name] = utils.load_graph(path / f"{name}.pt")
             components[name].eval()
-            components[name].compile()
+            # components[name].compile()
 
             # validate hashes
             component_hash = utils.hash_model_architecture(components[name])
