@@ -260,34 +260,3 @@ class PreFLMRImageProcessor:
         return {"pixel_values": pixel_values}
         # else:
         #     return pixel_values
-
-
-class PreFLMRInterface(SplitClient):
-    def __init__(self):
-        super().__init__()
-        self.processor = PreFLMRImageProcessor()
-        self.model = AutoModel.from_pretrained(
-            "LinWeizheDragon/PreFLMR_ViT-L", trust_remote_code=True, torch_dtype="auto"
-        )
-        # self.model = AutoModel.from_pretrained("LinWeizheDragon/PreFLMR_ViT-L", trust_remote_code=True, dtype="auto")
-
-        self.device = self.get_best_device()
-        self.model.to(self.device)
-        self.model.eval()
-
-    def get_model(self) -> torch.nn.Module:
-        return self.model
-
-    def batch_sizes(self) -> list[int]:
-        return [1, 2, 4, 8, 16, 32]
-
-    def get_benchmarks(
-        self, batch_size: int
-    ) -> tuple[int, int, Generator[tuple[tuple[Any, ...], dict[str, Any]], Any, NoReturn]]:
-        def get_example_inputs(bs: int):
-            while True:
-                img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(bs)]
-                enc = self.processor(img)
-                yield (), enc
-
-        return 10, 30, get_example_inputs(batch_size)

@@ -1,7 +1,7 @@
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import torch
 import psutil  # type: ignore
 from .compiler.switchboard import Switchboard
@@ -34,8 +34,8 @@ def _get_dram_utilization() -> int:
 
 
 class SwitchboardRuntime:
-    def __init__(self, switchboard_path: Path, sampling_interval: int = 4):
-        self.switchboard = Switchboard.load(switchboard_path)
+    def __init__(self, switchboard_path: Path, load_only: Optional[list[str]] = None, sampling_interval: int = 4):
+        self.switchboard = Switchboard.load(switchboard_path, load_only=load_only)
         self.tracer = trace.get_tracer("ts.runtime")
         self.meter = metrics.get_meter("ts.runtime")
         self.sampling_interval = sampling_interval
@@ -75,7 +75,7 @@ class SwitchboardRuntime:
 
             return output
 
-    def interpret(self, **kwargs: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    def interpret(self, debug: bool = False, **kwargs: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         """Execute the switchboard by running components in topological order."""
         with self.tracer.start_as_current_span("SwitchboardRuntime.interpret") as span:
             layout = self.switchboard.layout
@@ -113,6 +113,21 @@ class SwitchboardRuntime:
                     results[component_name] = component_outputs
                     intermediates[component_name] = outputs[component_name].copy()
                     outputs[component_name].clear()
+
+                    if debug:
+                        print(f"Executed component: {component_name}")
+                        for i, o in zip(meta.input_parameters, component_inputs):
+                            if torch.is_tensor(o):
+                                print(f"  Input {i}: {type(o)}, shape={o.shape}, dtype={o.dtype}")
+                            else:
+                                print(f"  Input {i}: {type(o)}")
+                        for o_name, o_value in zip(meta.output_parameters, component_outputs):
+                            if torch.is_tensor(o_value):
+                                print(
+                                    f"  Output {o_name}: {type(o_value)}, shape={o_value.shape}, dtype={o_value.dtype}"
+                                )
+                            else:
+                                print(f"  Output {o_name}: {type(o_value)}")
 
                     for output_name, output_value in zip(meta.output_parameters, component_outputs):
                         for downstream in downstream_nodes:

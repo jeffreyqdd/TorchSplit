@@ -19,6 +19,11 @@ logger = logging.get_logger(__name__)
 cond_mod = importlib.import_module("torch._higher_order_ops.cond")
 
 
+# setattr(fx.Node, "__hash__", lambda self: id(self))
+# setattr(fx.Node, "__eq__", lambda self, other: self is other)
+# setattr(fx.Node, "__neq__", lambda self, other: self is not other)
+
+
 def _flatten_arguments(items) -> Iterable:
     """Flatten nested arguments into a single iterable."""
     if isinstance(items, fx.Node):
@@ -106,7 +111,10 @@ class TorchGraph:
         g_outputs: set[ConcreteNode] = set()
 
         def remap_args(n: fx.Node) -> ConcreteNode | None:
-            return g_node_to_concrete.get(n, None)
+            try:
+                return g_node_to_concrete.get(n, None)
+            except TypeError:
+                return None
 
         for idx, (fx_node, concrete_node) in enumerate(zip(gm.graph.nodes, g_execution_order), 1):
             logger.debug(

@@ -29,13 +29,14 @@ metric_reader = PeriodicExportingMetricReader(metric_exporter)
 meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource)
 metrics.set_meter_provider(meter_provider)
 
-x = SwitchboardRuntime(Path("/dev/shm/switchboard.tspartd"))
+x = SwitchboardRuntime(Path("/dev/shm/switchboard_bs_128.tspartd"))
 
 processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-# original_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-# original_model.eval()
+original_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+original_model = original_model.to("cuda")
+original_model.eval()
 
-# # # basic input
+# basic input
 img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(128)]
 texts = [f"a plain white square {9}" for i in range(128)]
 enc = processor(
@@ -49,16 +50,18 @@ pixel_values = enc["pixel_values"].to("cuda")
 input_ids = enc["input_ids"].to("cuda")
 attention_mask = enc["attention_mask"].to("cuda")
 
-for i in range(1000):
-    result = x.interpret(
+for i in range(1):
+    result, _ = x.interpret(
+        debug=True,
         l_pixel_values_=pixel_values,
         l_input_ids_=input_ids,
         l_attention_mask_=attention_mask,
     )
-    # print(result["C"])
-# original_output = original_model(
-#     pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
-# ).logits_per_image
+    print(result["C"][0].shape)
+original_output = original_model(
+    pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
+).logits_per_image
+print(original_output.shape)
 
 # print("original", original_output)
 # print("split", result.keys())

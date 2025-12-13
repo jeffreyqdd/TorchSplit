@@ -75,7 +75,6 @@ class ClipInterface(SplitClient):
 
 
 def get_cut(split_interface: SplitClient):
-    split_interface = ClipInterface()
     _a, _b, generator = split_interface.get_benchmarks(32)
     args, kwargs = next(generator)
     model = split_interface.get_model()
