@@ -1,94 +1,127 @@
-from torch_split.runtime import SwitchboardRuntime, trace_call, trace_remote
-from starlette.requests import Request
-from typing import Dict
-from ray import serve
-from PIL import Image
-from transformers import CLIPProcessor  # type: ignore
+import base64
 import io
+import os
+from pathlib import Path
+from typing import Dict
+from requests import Request
+
 import ray
-from fastapi import FastAPI, UploadFile, File, Form
+import torch
+from fastapi import FastAPI, File, Form, UploadFile
+from PIL import Image
 from ray import serve
 from ray.serve.handle import DeploymentHandle
-from pathlib import Path
-import torch
+from starlette.requests import Request
+from transformers import CLIPProcessor  # type: ignore
+from opentelemetry import metrics, trace
 
-from torch_split.runtime import SwitchboardRuntime
+from torch_split.runtime import SwitchboardRuntime, setup_tracing
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 app = FastAPI()
 data_path = Path("/dev/shm/clipfullwrapper_bs_1.tspartd")
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0.3})
+@serve.deployment(ray_actor_options={"num_gpus": 0.8}, max_ongoing_requests=1024)
 class ComponentA:
     def __init__(self):
+        setup_tracing()
         self.switchboard = SwitchboardRuntime(data_path, load_only=["A"])
 
-    async def __call__(self, args: dict) -> dict:
+    def single(self, args: dict) -> dict:
         for k in args.keys():
-            args[k] = args[k].to("cuda")
+            t = torch.tensor(args[k], device="cuda").unsqueeze(0)
+            args[k] = t
+
         _masked_fill, text_embeds_1 = self.switchboard.call("A", **args)
-        return ray.put({"text_embeds_1": text_embeds_1})
-
-
-@serve.deployment(ray_actor_options={"num_gpus": 0.3, "num_cpus": 2})
-class ComponentB:
-    def __init__(self):
-        self.switchboard = SwitchboardRuntime(data_path, load_only=["B"])
-
-    async def __call__(self, args: dict) -> dict:
-        for k in args:
-            args[k] = args[k].to("cuda")
-        t = self.switchboard.call("B", **args)
-        return ray.put({"t": t[0].to("cpu")})
-
-
-@serve.deployment(ray_actor_options={"num_gpus": 0.3, "num_cpus": 2})
-class ComponentC:
-    def __init__(self):
-        self.switchboard = SwitchboardRuntime(data_path)
-
-    async def __call__(self, a, b) -> dict:
-        for k in a:
-            a[k] = a[k].to("cuda")
-
-        for k in b:
-            b[k] = b[k].to("cuda")
-        args = {**a, **b}
-        results = self.switchboard.call("C", **args)
-        return {"done": "done"}
-
-
-@serve.deployment(max_ongoing_requests=1024, ray_actor_options={"num_gpus": 0, "num_cpus": 16})
-class ClipPreprocessor:
-    def __init__(self):
-        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        return {"text_embeds_1": text_embeds_1.detach().cpu().numpy()}
 
     @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01, max_concurrent_batches=32)
+    async def __call__(self, batch: list) -> list:
+        return list(map(self.single, batch))
+
+
+@serve.deployment(ray_actor_options={"num_gpus": 0.1, "num_cpus": 2})
+class ComponentB:
+    def __init__(self):
+        setup_tracing()
+        self.switchboard = SwitchboardRuntime(data_path, load_only=["A"])
+        self.switchboard = SwitchboardRuntime(data_path, load_only=["B"])
+
+    def single(self, args: dict) -> dict:
+        for k in args.keys():
+            t = torch.tensor(args[k], device="cuda").unsqueeze(0)
+            args[k] = t
+            # print(t.shape)
+
+        t = self.switchboard.call("B", **args)
+        return {"t": t[0].detach().cpu().numpy()}
+
+    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01, max_concurrent_batches=32)
+    async def __call__(self, args: list[dict]) -> list[dict]:
+        return list(map(self.single, args))
+
+
+@serve.deployment(ray_actor_options={"num_gpus": 0.1, "num_cpus": 2})
+class ComponentC:
+    def __init__(self):
+        setup_tracing()
+        self.switchboard = SwitchboardRuntime(data_path)
+
+    def single(self, args) -> dict:
+        for k in args.keys():
+            t = torch.tensor(args[k], device="cuda")
+            args[k] = t
+            # print(t.shape)
+        results = self.switchboard.call("C", **args)
+        # print("results:", results)
+        return {"output": results[0].detach().cpu().numpy()}
+
+    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01, max_concurrent_batches=32)
+    async def __call__(self, args: list[tuple[dict, dict]]) -> list[dict]:
+        return list(map(self.single, ({**a[0], **a[1]} for a in args)))
+
+
+@serve.deployment(
+    max_ongoing_requests=1024,
+    ray_actor_options={"num_gpus": 0, "num_cpus": 16},
+)
+class ClipPreprocessor:
+    def __init__(self):
+        setup_tracing()
+        self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+    @serve.batch(max_batch_size=128, batch_wait_timeout_s=0.01, max_concurrent_batches=8)
     async def __call__(self, images_and_texts: list) -> list:
-        obj = [
-            self.processor(
-                images=it["image"],
-                text=it["text"],
-                padding="max_length",  # type: ignore
-                max_length=32,  # type: ignore
-                return_tensors="pt",  # type: ignore
-            )
-            for it in images_and_texts
-        ]
+        images = [it["image"] for it in images_and_texts]
+        texts = [it["text"] for it in images_and_texts]
+
+        batch = self.processor(
+            images=images,
+            text=texts,
+            padding="max_length",
+            max_length=32,
+            return_tensors="np",  # <-- key change
+        )
+
+        # return per-item dicts (same shape as you had), but as numpy arrays
+        pv = batch["pixel_values"]
+        ids = batch["input_ids"]
+        am = batch["attention_mask"]
 
         return [
-            ray.put(
-                {
-                    "l_pixel_values_": o["pixel_values"],
-                    "l_input_ids_": o["input_ids"],
-                    "l_attention_mask_": o["attention_mask"],
-                }
-            )
-            for o in obj
+            {
+                "l_pixel_values_": pv[i],
+                "l_input_ids_": ids[i],
+                "l_attention_mask_": am[i],
+            }
+            for i in range(len(images_and_texts))
         ]
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0, "num_cpus": 8})
+@serve.deployment(ray_actor_options={"num_gpus": 0, "num_cpus": 1}, num_replicas=8)
 @serve.ingress(app)
 class Pipeline:
     def __init__(
@@ -98,34 +131,40 @@ class Pipeline:
         B_node: DeploymentHandle,
         C_node: DeploymentHandle,
     ):
+        setup_tracing()
         self.pre = preprocessor
         self.A = A_node
         self.B = B_node
         self.C = C_node
 
-    @app.post("/clip")
-    async def infer(self, image: UploadFile = File(...), text: str = Form(...)):
+    def decode_image(self, b64_image: str) -> Image.Image:
+        data = base64.b64decode(b64_image)
+        return Image.open(io.BytesIO(data)).convert("RGB")
+
+    @app.post("/")
+    @torch.inference_mode()
+    async def infer(self, request: Request):
         # decode
-        img_bytes = await image.read()
-        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        with trace.get_tracer("clip-server").start_as_current_span("pipeline"):
+            payload = await request.json()
 
-        # preprocess
-        pre_out = await self.pre.remote({"image": pil_img, "text": text})
+            # preprocess
+            pre_out = self.pre.remote({"image": self.decode_image(payload["image"]), "text": payload["text"]})
 
-        # # step A
-        A_out = self.A.remote(pre_out)
+            # Pass the same ObjectRef to both components
+            # Ray's reference counting handles concurrent access1
+            A_handle = self.A.remote(pre_out)
+            B_handle = self.B.remote(pre_out)
 
-        # step B
-        B_out = self.B.remote(pre_out)
+            # Wait for both
+            A_out = await A_handle
+            B_out = await B_handle
+            C = await self.C.remote((A_out, B_out))
 
-        # step B
-        A = await A_out
-        B = await B_out
-        C = await self.C.remote(A, B)
-
-        return {"output": "done"}  # C_out["output"]
+            return {"output": "done"}
 
 
+# ray.init(_tracing_startup_hook="examples.clip.clip_tracing:setup_tracing")
 app = Pipeline.bind(
     preprocessor=ClipPreprocessor.bind(), A_node=ComponentA.bind(), B_node=ComponentB.bind(), C_node=ComponentC.bind()
 )  # type: ignore

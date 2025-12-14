@@ -15,12 +15,12 @@ clip_interface = ClipInterface()
 partition, roots = None, None
 
 
-def get_model_partition_for_batch_size(bs: int) -> SwitchboardRuntime:
+def get_model_partition_for_batch_size(bs: int, no_cache: bool = False) -> SwitchboardRuntime:
     global partition, roots
     model_name = clip_interface.get_model().__class__.__name__.lower()
     model_path = CACHE_PATH / f"{model_name}_bs_{bs}.tspartd"
 
-    if model_path.exists():
+    if model_path.exists() and not no_cache:
         return SwitchboardRuntime(Path(model_path))
 
     if partition is None or roots is None:
@@ -30,4 +30,7 @@ def get_model_partition_for_batch_size(bs: int) -> SwitchboardRuntime:
     return SwitchboardRuntime(Path(model_path))
 
 
-get_model_partition_for_batch_size(1)
+get_model_partition_for_batch_size(1, True)
+get_model_partition_for_batch_size(16, True)
+get_model_partition_for_batch_size(32, True)
+get_model_partition_for_batch_size(64, True)

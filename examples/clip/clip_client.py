@@ -48,7 +48,7 @@ def encode_sample(idx):
 
 
 def prepare_payloads_mp(num_workers=mp.cpu_count(), chunksize=64):
-    n = len(dataset)
+    n = 1024
 
     payloads = []
 
@@ -132,7 +132,7 @@ async def main():
     payloads = prepare_payloads_mp()
     print(f"Prepared {len(payloads)} payloads")
 
-    qps_schedule = [128, 256, 512, 1024, 2048]
+    qps_schedule = [1, 2, 4, 8, 128, 256, 512, 1024, 2048]
     duration = 5
 
     for qps in qps_schedule:

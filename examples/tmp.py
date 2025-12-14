@@ -18,6 +18,7 @@ from transformers import AutoImageProcessor, AutoModel, AutoProcessor, CLIPModel
 
 from torch_split.runtime import SwitchboardRuntime
 
+
 resource = Resource.create({"service.name": "torchsplit-runtime"})
 trace_provider = TracerProvider(resource=resource)
 span_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
@@ -29,7 +30,8 @@ metric_reader = PeriodicExportingMetricReader(metric_exporter)
 meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource)
 metrics.set_meter_provider(meter_provider)
 
-x = SwitchboardRuntime(Path("/dev/shm/switchboard_bs_128.tspartd"))
+
+x = SwitchboardRuntime(Path("/dev/shm/clipfullwrapper_bs_1.tspartd"))
 
 processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 original_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
@@ -37,8 +39,8 @@ original_model = original_model.to("cuda")
 original_model.eval()
 
 # basic input
-img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(128)]
-texts = [f"a plain white square {9}" for i in range(128)]
+img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(1)]
+texts = [f"a plain white square {9}" for i in range(1)]
 enc = processor(
     images=img,
     text=texts,

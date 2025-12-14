@@ -5,6 +5,14 @@ from typing import Any, Optional
 import torch
 import psutil  # type: ignore
 from .compiler.switchboard import Switchboard
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 
 from opentelemetry import trace, metrics
@@ -31,6 +39,22 @@ def _get_cpu_utilization() -> float:
 
 def _get_dram_utilization() -> int:
     return psutil.virtual_memory().used // (1024 * 1024)
+
+
+def setup_tracing():
+    resource = Resource.create({"service.name": "torchsplit-runtime"})
+    trace_provider = TracerProvider(resource=resource)
+    span_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
+    trace_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+    trace.set_tracer_provider(trace_provider)
+
+    metric_exporter = OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
+    metric_reader = PeriodicExportingMetricReader(metric_exporter)
+    meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource)
+    metrics.set_meter_provider(meter_provider)
+
+
+setup_tracing()
 
 
 class SwitchboardRuntime:

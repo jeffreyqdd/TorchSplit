@@ -458,7 +458,9 @@ class PartitionProvider:
                 selected_partitions,
             )
 
+        # the sort makes the export deterministic
         all_subgraphs = list(self._carve_subgraphs(selected_partitions))
+        all_subgraphs = sorted(all_subgraphs, key=lambda a: -len(a.enclosed_region))
         idx2char = [str(chr(ord("A") + idx)) for idx, _ in enumerate(all_subgraphs)]
 
         to_fx = self.torch_graph.to_fx
