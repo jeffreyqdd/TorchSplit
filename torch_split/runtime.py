@@ -42,6 +42,7 @@ def _get_dram_utilization() -> int:
 
 
 def setup_tracing():
+    """
     resource = Resource.create({"service.name": "torchsplit-runtime"})
     trace_provider = TracerProvider(resource=resource)
     span_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
@@ -52,6 +53,8 @@ def setup_tracing():
     metric_reader = PeriodicExportingMetricReader(metric_exporter)
     meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource)
     metrics.set_meter_provider(meter_provider)
+    """
+    pass
 
 
 setup_tracing()

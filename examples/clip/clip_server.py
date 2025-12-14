@@ -24,7 +24,7 @@ app = FastAPI()
 data_path = Path("/dev/shm/clipfullwrapper_bs_1.tspartd")
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0.8}, max_ongoing_requests=1024)
+@serve.deployment(num_replicas=9, ray_actor_options={"num_gpus": 0.2}, max_ongoing_requests=1024)
 class ComponentA:
     def __init__(self):
         setup_tracing()
@@ -38,12 +38,12 @@ class ComponentA:
         _masked_fill, text_embeds_1 = self.switchboard.call("A", **args)
         return {"text_embeds_1": text_embeds_1.detach().cpu().numpy()}
 
-    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01, max_concurrent_batches=32)
+    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01)
     async def __call__(self, batch: list) -> list:
         return list(map(self.single, batch))
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0.1, "num_cpus": 2})
+@serve.deployment(num_replicas=8, ray_actor_options={"num_gpus": 0.2}, max_ongoing_requests=1024)
 class ComponentB:
     def __init__(self):
         setup_tracing()
@@ -57,14 +57,14 @@ class ComponentB:
             # print(t.shape)
 
         t = self.switchboard.call("B", **args)
-        return {"t": t[0].detach().cpu().numpy()}
+        return {"to_5": t[0].detach().cpu().numpy()}
 
-    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01, max_concurrent_batches=32)
+    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01)
     async def __call__(self, args: list[dict]) -> list[dict]:
         return list(map(self.single, args))
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0.1, "num_cpus": 2})
+@serve.deployment(num_replicas=3, ray_actor_options={"num_gpus": 0.2}, max_ongoing_requests=1024)
 class ComponentC:
     def __init__(self):
         setup_tracing()
@@ -79,21 +79,22 @@ class ComponentC:
         # print("results:", results)
         return {"output": results[0].detach().cpu().numpy()}
 
-    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01, max_concurrent_batches=32)
+    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01)
     async def __call__(self, args: list[tuple[dict, dict]]) -> list[dict]:
         return list(map(self.single, ({**a[0], **a[1]} for a in args)))
 
 
 @serve.deployment(
-    max_ongoing_requests=1024,
-    ray_actor_options={"num_gpus": 0, "num_cpus": 16},
+    num_replicas=64,
+    max_ongoing_requests=1,
+    ray_actor_options={"num_gpus": 0},
 )
 class ClipPreprocessor:
     def __init__(self):
         setup_tracing()
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
-    @serve.batch(max_batch_size=128, batch_wait_timeout_s=0.01, max_concurrent_batches=8)
+    @serve.batch(max_batch_size=32, batch_wait_timeout_s=0.01)
     async def __call__(self, images_and_texts: list) -> list:
         images = [it["image"] for it in images_and_texts]
         texts = [it["text"] for it in images_and_texts]
