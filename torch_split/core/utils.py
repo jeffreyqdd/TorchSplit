@@ -10,8 +10,8 @@ import torch._dynamo.exc as dynamo_exc
 import torch.fx as fx
 import torch.nn as nn
 
-import torch_split.compiler.assertions as assertions
-import torch_split.compiler.log as logging
+import torch_split.core.assertions as assertions
+import torch_split.core.log as logging
 
 
 def capture_graph(m: nn.Module) -> Callable[..., fx.GraphModule]:

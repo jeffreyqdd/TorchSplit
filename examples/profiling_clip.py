@@ -9,8 +9,8 @@ from pathlib import Path
 
 from torch.profiler import profile, ProfilerActivity
 
-from torch_split.compiler import ir, utils
-from torch_split.compiler.partition import provider
+from torch_split.core import ir, utils
+from torch_split.core.partition import provider
 import torch_split.lib as lib
 from torch_split.interface import SplitClient
 from torch_split.runtime import SwitchboardRuntime

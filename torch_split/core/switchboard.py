@@ -6,7 +6,7 @@ from typing import Optional
 import torch.fx as fx
 from pydantic import BaseModel
 
-from torch_split.compiler import assertions, log, utils
+from torch_split.core import assertions, log, utils
 
 logger = log.get_logger(__name__)
 

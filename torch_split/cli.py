@@ -3,17 +3,19 @@
 import argparse
 import importlib
 import json
-import sys
 import os
+import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import torch_split.core.ir as ir
+import torch_split.core.log as logging
+import torch_split.core.profiling.annotators as annotators
+import torch_split.core.utils as utils
 import torch_split.interface as client
-import torch_split.compiler.log as logging
-import torch_split.compiler.ir as ir
-import torch_split.compiler.profiling.annotators as annotators
-import torch_split.compiler.utils as utils
-from torch_split.compiler.partition import provider, solver
+from torch_split.core.partition import provider, solver
 
 sys.path.insert(0, ".")
 
@@ -23,122 +25,54 @@ logger = logging.get_logger(__name__)
 
 @dataclass(frozen=True)
 class ModelSpec:
-    name: str
-    hash: str
-    cache_directory: Path
+    model_name: str
+    model_hash: str
+    artifact_directory: Path
     split_client: client.SplitClient
 
 
-def assert_model_cache(model_spec: ModelSpec, no_cache: bool = False):
-    model_spec.cache_directory.mkdir(parents=True, exist_ok=True)
+@contextmanager
+def assert_transaction(model_spec: ModelSpec, no_cache: bool = False):
+    try:
+        architecture_hash_file = model_spec.artifact_directory / "architecture.hash"
+        architecture_hash_file.touch(exist_ok=True)
 
-    architecture_hash_file = model_spec.cache_directory / "architecture.hash"
-    architecture_hash_file.touch(exist_ok=True)
+        with open(architecture_hash_file, "r") as f:
+            previous_hash = f.readline().strip()
+            require_update = previous_hash != model_spec.model_hash
 
-    annotation_directory = model_spec.cache_directory / "annotations"
-    annotation_directory.mkdir(parents=True, exist_ok=True)
-
-    profiling_files = {
-        bs: annotation_directory / f"profiling_batchsize_{bs}.json" for bs in model_spec.split_client.batch_sizes()
-    }
-
-    device_files = {
-        bs: annotation_directory / f"device_batchsize_{bs}.json" for bs in model_spec.split_client.batch_sizes()
-    }
-
-    with open(architecture_hash_file, "r") as f:
-        previous_hash = f.readline().strip()
-        require_update = previous_hash != model_spec.hash
-
-    files_missing = any(
-        not x.exists() or not y.exists() for x, y in zip(profiling_files.values(), device_files.values())
-    )
-
-    if previous_hash != model_spec.hash:
-        logger.info("detected model architecture change")
-    elif files_missing:
-        logger.info("detected missing profiling artifacts")
-    elif no_cache:
-        logger.info("detected no cache option")
-
-    if require_update or no_cache or files_missing:
-        # clean previous artifacts for consistency
-        for file in annotation_directory.iterdir():
-            try:
-                file.unlink()
-            except Exception:
-                logger.warning("could not remove old artifact: %s", file)
-
-        for bs in model_spec.split_client.batch_sizes():
-            profiling_file = profiling_files[bs]
-            device_file = device_files[bs]
-            warmup_rounds, iterations, generator = model_spec.split_client.get_benchmarks(bs)
-
-            args, kwargs = next(generator)
-            gm = utils.capture_graph(model_spec.split_client.get_model())(*args, **kwargs)
-            d_annotator = annotators.DeviceAnnotator(gm).run(*args, **kwargs)
-            rt_annotator = annotators.RuntimeAnnotator(gm)
-            with rt_annotator:
-                rt_annotator.set_mode(annotators.RuntimeAnnotator.Mode.WARMUP)
-                for _ in range(warmup_rounds):
-                    args, kwargs = next(generator)
-                    rt_annotator.run(*args, **kwargs)
-
-                for mode in annotators.RuntimeAnnotator.Mode.profiling_modes():
-                    rt_annotator.set_mode(mode)
-                    for _ in range(iterations):
-                        args, kwargs = next(generator)
-                        rt_annotator.run(*args, **kwargs)
-
-            with open(device_file, "w") as f:
-                f.write(d_annotator.get_json())
-            with open(profiling_file, "w") as f:
-                f.write(rt_annotator.get_json())
-
+        if no_cache or not require_update:
+            yield False
+        else:
+            yield True
+    except Exception as e:
+        raise e
+    else:
         with open(architecture_hash_file, "w") as f:
-            f.write(model_spec.hash + "\n")
-
-    for bs in model_spec.split_client.batch_sizes():
-        with open(profiling_files[bs], "r") as f:
-            profiling_data = json.load(f)
-
-        with open(device_files[bs], "r") as f:
-            device_data = json.load(f)
-
-        yield bs, profiling_data, device_data
+            f.write(model_spec.model_hash + "\n")
 
 
-def load_split_interface(c: str) -> client.SplitClient:
-    module_path, class_name = c.split(":")
-    module_path = module_path.replace("/", ".").rstrip(".py").lstrip(".")
-    logger.info("loading client %s:%s", module_path, class_name)
-
+def _load_attr_from_module_path(module_path: str) -> Any:
+    module_path, class_name = module_path.split(":")
     try:
         module = importlib.import_module(module_path)
         return getattr(module, class_name)()
 
     except Exception:
-        logger.exception("failed to load SplitClient '%s:%s'", module_path, class_name)
+        logger.exception("failed to load '%s:%s'", module_path, class_name)
         sys.exit(1)
 
-    #     model = split_client.get_model()
-    #     model_name = model.__class__.__name__
-    #     model_hash = utils.hash_model_architecture(model)
-    #     model_cache_directory = Path(program_args.cache) / model_name / model_hash
 
-    #     target_models[model_name] = ModelSpec(
-    #         name=model_name,
-    #         hash=model_hash,
-    #         cache_directory=model_cache_directory,
-    #         split_client=split_client,
-    #     )
-
-    #     logger.info(
-    #         "model [cyan]%s[/] [dim](hash %s...)[/]\nmodel cache directory [dim](%s...)[/]",
-    #         model_name,
-    #         model_hash[:12],
-    #         str(model_cache_directory)[:40],
-    #     )
+def get_cut(split_interface: client.SplitClient):
+    _a, _b, generator = split_interface.get_benchmarks(32)
+    args, kwargs = next(generator)
+    model = split_interface.get_model()
+    model_name = model.__class__.__name__
+    gm = utils.capture_graph(model)(*args, **kwargs)
+    tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
+    pp = provider.PartitionProvider(tg)
+    ap = sorted(pp.all_partitions(), key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
+    return [ap[0]], pp
 
 
 def export_fun(program_args: argparse.Namespace):
@@ -148,7 +82,7 @@ def export_fun(program_args: argparse.Namespace):
 
     batch_size: int = program_args.b
     output_dir = Path(program_args.o)
-    split_interface = load_split_interface(program_args.model)
+    split_interface: client.SplitClient = _load_attr_from_module_path(program_args.model)
 
     model = split_interface.get_model()
     model_name = model.__class__.__name__
@@ -188,20 +122,106 @@ def export_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
         "model",
         type=str,
-        help="Path to TorchSplitClient interface instance e.g. './src/main.py:client'",
+        help="Module path to TorchSplitClient interface instance e.g. 'src.main:client'",
     )
     parser.set_defaults(func=export_fun)
 
 
-def profile_parser(parser: argparse.ArgumentParser):
-    pass
+def optimizer_fun(program_args: argparse.Namespace):
+    if program_args.t:
+        _load_attr_from_module_path(program_args.t)()
+
+    artifact_dir = Path(program_args.o)
+    batch_sizes: list[int] = program_args.b
+    memory_sizes: list[int] = program_args.memory
+    debug_mode: bool = program_args.s
+    split_client: client.SplitClient = _load_attr_from_module_path(program_args.model)
+
+    model = split_client.get_model()
+    model_name = model.__class__.__name__
+    model_hash = utils.hash_model_architecture(model)
+
+    model_spec = ModelSpec(model_name, model_hash, artifact_dir, split_client)
+
+    logger.info("model [cyan]%s[/] [dim](hash %s...)[/] batch size = %d", model_name, model_hash[:12])
+    logger.info("artifact directory: %s", str(artifact_dir))
+    logger.info("batch sizes: %s", ", ".join(map(str, batch_sizes)))
+    logger.info("memory sizes: %s", ", ".join(map(str, memory_sizes)))
+
+    # with assert_transaction(model_spec, program_args.no_cache) as requires_update:
+    #     if not requires_update:
+    #         logger.info("model architecture unchanged, skipping optimization")
+    #         return
+
+    #     cut, root = get_cut(split_client)
+    #     for batch_size in batch_sizes:
+
+    # _a, _b, generator = split_interface.get_benchmarks(batch_size)
+    # args, kwargs = next(generator)
+
+    # gm = utils.capture_graph(model)(*args, **kwargs)
+    # tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
+    # pp = provider.PartitionProvider(tg)
+    # ap = sorted(pp.all_partitions(), key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
+    # sb = pp.create_switchboard([ap[0]])
+    # logger.info("exporting switchboard to %s", str(output_dir))
+    # sb.save(output_dir)
+
+
+def optimizer_parser(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        "-t",
+        "--trace",
+        type=str,
+        help="module path e.g. src.provider:console_provider for trace provider hook",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Output path for the optimization and profiling artifacts",
+    )
+
+    parser.add_argument(
+        "-b",
+        "--batch-size",
+        type=int,
+        nargs="+",
+        default=[1, 2, 4, 8, 16, 32, 64],
+        help="Batch size to use for optimization and profiling",
+    )
+
+    parser.add_argument(
+        "-m",
+        "--memory",
+        type=int,
+        nargs="+",
+        default=[1, 2, 4, 8],
+        help="Memory slice sizes to use for optimization and profiling",
+    )
+
+    parser.add_argument(
+        "-s",
+        default=False,
+        action="store_true",
+        help="Output intermediates for debugging and visualization",
+    )
+
+    parser.add_argument(
+        "model",
+        type=str,
+        help="Module path to TorchSplitClient interface instance e.g. 'src.main:client'",
+    )
+
+    parser.set_defaults(func=optimizer_fun)
 
 
 def main():
     parser = argparse.ArgumentParser(description="torchsplit cli")
     subparser = parser.add_subparsers(dest="command", required=True)
     export_parser(subparser.add_parser("export", help="export a model to a switchboard"))
-    profile_parser(subparser.add_parser("profile", help="profile a model"))
+    optimizer_parser(subparser.add_parser("optimize", help="find optimal allocation for a model"))
 
     program_args = parser.parse_args()
     program_args.func(program_args)

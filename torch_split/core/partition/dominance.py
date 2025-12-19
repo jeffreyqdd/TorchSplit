@@ -8,8 +8,8 @@ from dataclasses import dataclass
 import graphviz  # type: ignore
 from frozendict import frozendict
 
-from torch_split.compiler.ir import TorchGraph, ConcreteNode
-import torch_split.compiler.log as logging
+from torch_split.core.ir import TorchGraph, ConcreteNode
+import torch_split.core.log as logging
 
 logger = logging.get_logger(__name__)
 

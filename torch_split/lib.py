@@ -1,8 +1,8 @@
 from torch_split.interface import SplitClient
-from torch_split.compiler.partition.provider import Partition, PartitionProvider
-from torch_split.compiler.switchboard import Switchboard
-from torch_split.compiler.ir import TorchGraph
-import torch_split.compiler.utils as utils
+from torch_split.core.partition.provider import Partition, PartitionProvider
+from torch_split.core.switchboard import Switchboard
+from torch_split.core.ir import TorchGraph
+import torch_split.core.utils as utils
 
 
 def batch_compiler(

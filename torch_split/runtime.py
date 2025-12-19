@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 import torch
 import psutil  # type: ignore
-from .compiler.switchboard import Switchboard
+from .core.switchboard import Switchboard
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -71,6 +71,10 @@ class SwitchboardRuntime:
         self.cpu_gauge = self.meter.create_gauge("cpu_utilization", unit="%", description="CPU usage percentage")
         self.memory_gauge = self.meter.create_gauge("memory_usage", unit="MB", description="Memory usage in MB")
         gpu_gauge = self.meter.create_gauge("gpu_utilization", unit="%", description="GPU usage percentage")
+
+    @staticmethod
+    def from_switchboard(switchboard: Switchboard) -> "SwitchboardRuntime":
+        obj = SwitchboardRuntime.__new__(SwitchboardRuntime, switchboard=switchboard)
 
     def _map_to_position_args(self, inputs: Iterable[str], kwargs: dict[str, Any]) -> tuple[Any, ...]:
         """Map a list of input parameter names to positional args from kwargs."""

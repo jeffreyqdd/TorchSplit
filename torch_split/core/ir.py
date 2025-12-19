@@ -11,8 +11,8 @@ import graphviz  # type: ignore
 import torch.fx as fx
 from frozendict import frozendict
 
-import torch_split.compiler.assertions as assertions
-import torch_split.compiler.log as logging
+import torch_split.core.assertions as assertions
+import torch_split.core.log as logging
 
 logger = logging.get_logger(__name__)
 

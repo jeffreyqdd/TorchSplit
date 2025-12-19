@@ -8,9 +8,9 @@ from typing import Optional, TypeVar
 import graphviz  # type: ignore
 import torch.fx as fx
 
-import torch_split.compiler.assertions as assertions
-import torch_split.compiler.log as logging
-from torch_split.compiler.switchboard import (
+import torch_split.core.assertions as assertions
+import torch_split.core.log as logging
+from torch_split.core.switchboard import (
     Switchboard,
     ComponentMetadata,
     ComponentName,
@@ -18,9 +18,9 @@ from torch_split.compiler.switchboard import (
     DownstreamNode,
     SwitchboardLayout,
 )
-import torch_split.compiler.utils as utils
-from torch_split.compiler.ir import ConcreteNode, TorchGraph
-from torch_split.compiler.partition.dominance import DominanceInformation, VirtualNode
+import torch_split.core.utils as utils
+from torch_split.core.ir import ConcreteNode, TorchGraph
+from torch_split.core.partition.dominance import DominanceInformation, VirtualNode
 
 logger = logging.get_logger(__name__)
 
