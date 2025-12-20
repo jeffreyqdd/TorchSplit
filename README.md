@@ -53,12 +53,6 @@ The allocation result you get might be differ from run to run due to the non-det
            INFO      - Model A assigned 10x to GPU0 with memory slice 4GB
            INFO      - Model A assigned 10x to GPU2 with memory slice 4GB
            INFO      - Model C assigned 1x to GPU3 with memory slice 4GB
-           INFO     Node Utilization:
-           INFO     Nodes: [0, 1, 2, 3]
-           INFO      - GPU0: 320.0%
-           INFO      - GPU1: 550.0%
-           INFO      - GPU2: 320.0%
-           INFO      - GPU3: 500.0%
 ```
 
 This is because Model B has ~50% GPU utilization, Model A has ~30% GPU utilization, and Model C has ~10% GPU utilization.
@@ -70,7 +64,12 @@ To serve the model using Ray Serve, run the following command:
 
 ```bash
 serve run examples.clip.optimized_server:app
+
+python3 ./examples/clip/client.py
 ```
+
+or `serve run examples.clip.monolithic_server:app` to run the monolithic server.
+
 
 
 ## Docker and Tracing
