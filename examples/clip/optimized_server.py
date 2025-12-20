@@ -97,9 +97,9 @@ class ComponentC:
 
 
 @serve.deployment(
-    num_replicas=2,
-    max_ongoing_requests=1,
-    ray_actor_options={"num_gpus": 0, "num_cpus": 8},
+    num_replicas=1,
+    max_ongoing_requests=32,
+    ray_actor_options={"num_gpus": 0, "num_cpus": 1},
 )
 class ClipPreprocessor:
     def __init__(self):
@@ -124,7 +124,7 @@ class ClipPreprocessor:
         pv = batch["pixel_values"]
         ids = batch["input_ids"]
         am = batch["attention_mask"]
-
+        print("Preprocessed batch of size", len(images_and_texts))
         return [
             {
                 "l_pixel_values_": pv[i],
@@ -135,7 +135,7 @@ class ClipPreprocessor:
         ]
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0, "num_cpus": 8}, num_replicas=1)
+@serve.deployment(ray_actor_options={"num_gpus": 0, "num_cpus": 1}, num_replicas=1)
 @serve.ingress(app)
 class Pipeline:
     def __init__(
@@ -155,7 +155,7 @@ class Pipeline:
         data = base64.b64decode(b64_image)
         return Image.open(io.BytesIO(data)).convert("RGB")
 
-    @app.post("/")
+    @app.post("/clip")
     @torch.inference_mode()
     async def infer(self, request: Request):
         # decode
@@ -163,7 +163,7 @@ class Pipeline:
             payload = await request.json()
 
             # preprocess
-            pre_out = self.pre.remote({"image": self.decode_image(payload["image"]), "text": payload["text"]})
+            pre_out = await self.pre.remote({"image": self.decode_image(payload["image"]), "text": payload["text"]})
 
             # Pass the same ObjectRef to both components
             # Ray's reference counting handles concurrent access1

@@ -14,7 +14,7 @@ from datasets import load_dataset
 from PIL import Image
 from tqdm import tqdm
 
-SERVE_URL = "http://127.0.0.1:8000/"
+SERVE_URL = "http://127.0.0.1:8000/clip"
 
 os.environ["HF_DATASETS_CACHE"] = "/dev/shm/hf_datasets_cache"
 
