@@ -63,13 +63,13 @@ class SwitchboardRuntime:
     def call(self, component_name: str, *args, **kwargs):
         with self.tracer.start_as_current_span(f"SwitchboardRuntime.call:{component_name}") as span:
             output = self.switchboard.call_component(component_name, *args, **kwargs)
-            span.add_event("executed_model")
+            span.add_event("call.executed_model")
 
             input_size = _estimate_tensor_size(args) + _estimate_tensor_size(kwargs.values())
             output_size = _estimate_tensor_size(output)
-            span.set_attribute("input_size_bytes", input_size)
-            span.set_attribute("output_size_bytes", output_size)
-            span.add_event("attributes_recorded")
+            span.set_attribute("call.input_size_bytes", input_size)
+            span.set_attribute("call.output_size_bytes", output_size)
+            span.add_event("call.attributes_recorded")
 
             return output
 
@@ -96,6 +96,7 @@ class SwitchboardRuntime:
                     args_list.extend(dep_args)
                     kwargs_dict.update(dep_kwargs)
 
+                span.add_event("interpret.unpacked_inputs")
                 data[component_name] = self.call(component_name, *args_list, **kwargs_dict)
 
         return data

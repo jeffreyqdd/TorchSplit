@@ -25,10 +25,10 @@ span_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
 trace_provider.add_span_processor(BatchSpanProcessor(span_exporter))
 trace.set_tracer_provider(trace_provider)
 
-metric_exporter = OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
-metric_reader = PeriodicExportingMetricReader(metric_exporter)
-meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource)
-metrics.set_meter_provider(meter_provider)
+# metric_exporter = OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
+# metric_reader = PeriodicExportingMetricReader(metric_exporter)
+# meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource)
+# metrics.set_meter_provider(meter_provider)
 
 
 x = SwitchboardRuntime.from_path(Path("/dev/shm/switchboard.tspartd"), debug=True)
@@ -40,8 +40,9 @@ original_model = original_model.to("cuda")  # type: ignore
 original_model.eval()
 
 # basic input
-img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(1)]
-texts = [f"a plain white square {9}" for i in range(1)]
+BATCH_SIZE = 1
+img = [Image.new("RGB", (224, 224), color=(255, 255, 255)) for _ in range(BATCH_SIZE)]
+texts = [f"a plain white square {9}" for i in range(BATCH_SIZE)]
 enc = processor(
     images=img,
     text=texts,
@@ -53,24 +54,15 @@ pixel_values = enc["pixel_values"].to("cuda")  # type: ignore
 input_ids = enc["input_ids"].to("cuda")  # type: ignore
 attention_mask = enc["attention_mask"].to("cuda")  #    type: ignore
 
-for i in range(1):
+for i in range(10):
     result = x.interpret(
         l_pixel_values_=pixel_values,
         l_input_ids_=input_ids,
         l_attention_mask_=attention_mask,
     )
-    print(result["C"]["output"])
+    if i == 0:
+        print(result["C"]["output"])
 original_output = original_model(
     pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
 ).logits_per_image
 print(original_output)
-
-# print("original", original_output)
-# print("split", result.keys())
-# print("split output", result["C"])
-
-# # # Calculate error metrics
-# # abs_diff = torch.abs(original_output.to("cuda") - result)
-# # rel_diff = abs_diff / torch.abs(original_output.to("cuda"))
-# # print(f"Absolute difference: {abs_diff.item():.6f}")
-# # print(f"Relative difference: {rel_diff.item():.4%}")
