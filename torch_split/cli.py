@@ -161,7 +161,7 @@ def optimizer_fun(program_args: argparse.Namespace):
     # cap it at 4GB minimum or solver takes too long
     MEMORY_BUCKETS = list(
         filter(
-            lambda x: x >= 8,
+            lambda x: x >= 4,
             sorted(
                 {i for system_mem in DEVICE_MEMORY_GB.values() for i in range(1, system_mem + 1) if system_mem % i == 0}
             ),

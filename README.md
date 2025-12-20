@@ -9,7 +9,8 @@ Please use conda since this was tested only on conda.
 2. `conda activate $PSCRATCH/ts310`
 3. `conda install poetry`
 4. `conda install graphviz`
-4. `poetry install --no-root --all-groups`
+5. `poetry install --no-root --all-groups`
+6. `export PYTHONPATH=$(pwd):$PYTHONPATH`
 
 ## Running
 ### Exporting
@@ -41,26 +42,23 @@ You can pass the "-s" flag to generate the intermediate dataflow graphs used dur
 The allocation result you get might be differ from run to run due to the non-deterministic nature of pynvml's GPU utilization. For one run: 
 
 ```
-[22:19:47] INFO     Pipeline Throughput: 682.36
+[00:09:49] INFO     Pipeline Throughput: 3050.05
            INFO     Leximin Model Throughputs:
-           INFO      B: 682.36
-           INFO      A: 783.12
-           INFO      C: 231513.64
+           INFO      A: 3050.05
+           INFO      B: 3172.48
+           INFO      C: 11520.80
            INFO     Assignments:
-           INFO      - Model B assigned 1x to GPU0 with memory slice 10GB
-           INFO      - Model B assigned 1x to GPU1 with memory slice 10GB
-           INFO      - Model B assigned 2x to GPU3 with memory slice 10GB
-           INFO      - Model A assigned 5x to GPU2 with memory slice 4GB
-           INFO      - Model C assigned 6x to GPU0 with memory slice 5GB
-           INFO      - Model C assigned 6x to GPU1 with memory slice 5GB
-           INFO      - Model C assigned 4x to GPU2 with memory slice 5GB
-           INFO      - Model C assigned 4x to GPU3 with memory slice 5GB
+           INFO      - Model B assigned 10x to GPU1 with memory slice 4GB
+           INFO      - Model B assigned 9x to GPU3 with memory slice 4GB
+           INFO      - Model A assigned 10x to GPU0 with memory slice 4GB
+           INFO      - Model A assigned 10x to GPU2 with memory slice 4GB
+           INFO      - Model C assigned 1x to GPU3 with memory slice 4GB
            INFO     Node Utilization:
            INFO     Nodes: [0, 1, 2, 3]
-           INFO      - GPU0: 110.0%
-           INFO      - GPU1: 110.0%
-           INFO      - GPU2: 205.0%
-           INFO      - GPU3: 140.0%
+           INFO      - GPU0: 320.0%
+           INFO      - GPU1: 550.0%
+           INFO      - GPU2: 320.0%
+           INFO      - GPU3: 500.0%
 ```
 
 This is because Model B has ~50% GPU utilization, Model A has ~30% GPU utilization, and Model C has ~10% GPU utilization.

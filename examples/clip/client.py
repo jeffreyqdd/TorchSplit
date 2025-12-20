@@ -58,7 +58,7 @@ dataset = load_dataset(
 )
 label_names = dataset.features["label"].names
 
-NUM_SAMPLES = 64  # 10500
+NUM_SAMPLES = 10500
 
 
 def prepare_payloads():

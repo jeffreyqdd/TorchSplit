@@ -37,7 +37,7 @@ def _move_to_device(obj: Any, device: torch.device, **kwargs) -> Any:
     return _apply_recursive(obj, lambda x: x.to(device, **kwargs) if hasattr(x, "to") else x)
 
 
-@serve.deployment(num_replicas=1, ray_actor_options={"num_gpus": 0.25, "num_cpus": 4}, max_ongoing_requests=1024)
+@serve.deployment(num_replicas=20, ray_actor_options={"num_gpus": 0.10, "num_cpus": 1}, max_ongoing_requests=1024)
 class ComponentA:
     def __init__(self):
         self.switchboard = SwitchboardRuntime.from_path(data_path, load_only=["A"])
@@ -55,7 +55,7 @@ class ComponentA:
         return list(map(self.single, batch))
 
 
-@serve.deployment(num_replicas=1, ray_actor_options={"num_gpus": 0.25, "num_cpus": 4}, max_ongoing_requests=1024)
+@serve.deployment(num_replicas=19, ray_actor_options={"num_gpus": 0.10, "num_cpus": 1}, max_ongoing_requests=1024)
 class ComponentB:
     def __init__(self):
         # setup_tracing()
@@ -75,7 +75,7 @@ class ComponentB:
         return list(map(self.single, args))
 
 
-@serve.deployment(num_replicas=1, ray_actor_options={"num_gpus": 0.2, "num_cpus": 4}, max_ongoing_requests=1024)
+@serve.deployment(num_replicas=1, ray_actor_options={"num_gpus": 0.10, "num_cpus": 1}, max_ongoing_requests=1024)
 class ComponentC:
     def __init__(self):
         # setup_tracing()
@@ -97,9 +97,9 @@ class ComponentC:
 
 
 @serve.deployment(
-    num_replicas=1,
-    max_ongoing_requests=32,
-    ray_actor_options={"num_gpus": 0, "num_cpus": 1},
+    num_replicas=8,
+    max_ongoing_requests=1024,
+    ray_actor_options={"num_gpus": 0, "num_cpus": 8},
 )
 class ClipPreprocessor:
     def __init__(self):
@@ -135,7 +135,7 @@ class ClipPreprocessor:
         ]
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0, "num_cpus": 1}, num_replicas=1)
+@serve.deployment(ray_actor_options={"num_gpus": 0, "num_cpus": 0.1}, num_replicas=64)
 @serve.ingress(app)
 class Pipeline:
     def __init__(

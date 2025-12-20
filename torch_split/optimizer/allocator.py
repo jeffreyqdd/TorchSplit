@@ -26,7 +26,7 @@ class Solver:
 
                 throughput[name][memory_restriction] = 1000.0 / np.mean(data["elapsed_time_ms"]) * batch_size
                 utilization[name][memory_restriction] = max(
-                    10, int(data["utilization_pct"])
+                    5, int(data["utilization_pct"])
                 )  # set floor at 10% bc nvml does not want to give me true utilization
 
         valid_layouts: list[list[int]] = self.multistep_combinations(self.memory_slices, max(self.memory_slices))
@@ -36,7 +36,7 @@ class Solver:
         nodes = list(range(self.num_gpus))
 
         UTILIZATION_LIMIT = 100.0
-        PENALTY_WEIGHT = 1000.0
+        PENALTY_WEIGHT = 0.0  # 100.0
 
         def solve_step(locked_lower_bounds):
             m = gp.Model("Leximin_Level")
