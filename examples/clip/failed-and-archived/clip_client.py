@@ -7,7 +7,7 @@ from tqdm import tqdm
 import multiprocessing as mp
 
 
-from examples.clip.clip_dataset import get_dataset
+from examples.clip.dataset import get_dataset
 
 mp.set_start_method("spawn", force=True)
 

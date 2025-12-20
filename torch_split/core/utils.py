@@ -1,5 +1,6 @@
 import hashlib
 import json
+import inspect
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Optional, cast
@@ -11,14 +12,17 @@ import torch.fx as fx
 import torch.nn as nn
 
 import torch_split.core.assertions as assertions
-import torch_split.core.log as logging
+import torch_split.log as logging
 
 
 def capture_graph(m: nn.Module) -> Callable[..., fx.GraphModule]:
     def graph_module_generator(*args, **kwargs) -> fx.GraphModule:
         try:
             dynamo.config.dynamic_shapes = False
-            export_result = dynamo.export(m, tracing_mode="concrete")(*args, **kwargs)
+            export_result = dynamo.export(
+                m,
+                tracing_mode="concrete",
+            )(*args, **kwargs)
             if isinstance(export_result, dynamo.eval_frame.ExportResult):
                 gm = export_result.graph_module
                 return gm
@@ -62,7 +66,10 @@ def extract_subgraph(
         env[node.name] = new_node
 
     if not added_output:
-        new_graph.output([env[output.name] for output in o])
+        if len(o) == 1:
+            new_graph.output(env[o[0].name])
+        else:
+            new_graph.output(tuple(env[output.name] for output in o))
     new_gm = fx.GraphModule(gm, new_graph)
     new_gm.eval()
     new_gm.graph.eliminate_dead_code()

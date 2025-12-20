@@ -1,6 +1,5 @@
 """TorchSplit - Automatic model splitting for PyTorch."""
 
-from torch_split.interface import SplitClient
 
 # # Try to import the Rust backend, handle case where it's not built yet (e.g. during linting)
 # try:
@@ -8,4 +7,4 @@ from torch_split.interface import SplitClient
 # except ImportError:
 #     _rust_backend = None
 
-__all__ = ["SplitClient", "_rust_backend"]
+# __all__ = ["SplitClient", "_rust_backend"]

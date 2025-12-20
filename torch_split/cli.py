@@ -1,21 +1,33 @@
 #!/usr/bin/env python3
-
 import argparse
+from collections.abc import Callable
 import importlib
 import json
 import os
 import sys
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import torch_split.core.ir as ir
-import torch_split.core.log as logging
-import torch_split.core.profiling.annotators as annotators
-import torch_split.core.utils as utils
-import torch_split.interface as client
-from torch_split.core.partition import provider, solver
+import torch
+
+import torch_split.log as logging
+from torch_split.core import SplitClient, utils, batch_compiler, get_partition_template
+from torch_split.optimizer import Profiler, Solver
+
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message=".*_register_pytree_node.*",
+)
+
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    message=".*resume_download.*",
+)
 
 sys.path.insert(0, ".")
 
@@ -28,7 +40,7 @@ class ModelSpec:
     model_name: str
     model_hash: str
     artifact_directory: Path
-    split_client: client.SplitClient
+    split_client: SplitClient
 
 
 @contextmanager
@@ -56,23 +68,11 @@ def _load_attr_from_module_path(module_path: str) -> Any:
     module_path, class_name = module_path.split(":")
     try:
         module = importlib.import_module(module_path)
-        return getattr(module, class_name)()
+        return getattr(module, class_name)(), lambda: getattr(module, class_name)()
 
     except Exception:
         logger.exception("failed to load '%s:%s'", module_path, class_name)
         sys.exit(1)
-
-
-def get_cut(split_interface: client.SplitClient):
-    _a, _b, generator = split_interface.get_benchmarks(32)
-    args, kwargs = next(generator)
-    model = split_interface.get_model()
-    model_name = model.__class__.__name__
-    gm = utils.capture_graph(model)(*args, **kwargs)
-    tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
-    pp = provider.PartitionProvider(tg)
-    ap = sorted(pp.all_partitions(), key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
-    return [ap[0]], pp
 
 
 def export_fun(program_args: argparse.Namespace):
@@ -82,23 +82,18 @@ def export_fun(program_args: argparse.Namespace):
 
     batch_size: int = program_args.b
     output_dir = Path(program_args.o)
-    split_interface: client.SplitClient = _load_attr_from_module_path(program_args.model)
+    split_tuple: tuple[SplitClient, Callable[[], SplitClient]] = _load_attr_from_module_path(program_args.model)
+    split_interface, _ = split_tuple
 
     model = split_interface.get_model()
     model_name = model.__class__.__name__
     model_hash = utils.hash_model_architecture(model)
 
     logger.info("model [cyan]%s[/] [dim](hash %s...)[/] batch size = %d", model_name, model_hash[:12], batch_size)
-    _a, _b, generator = split_interface.get_benchmarks(batch_size)
-    args, kwargs = next(generator)
-
-    gm = utils.capture_graph(model)(*args, **kwargs)
-    tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
-    pp = provider.PartitionProvider(tg)
-    ap = sorted(pp.all_partitions(), key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
-    sb = pp.create_switchboard([ap[0]])
-    logger.info("exporting switchboard to %s", str(output_dir))
-    sb.save(output_dir)
+    pt = get_partition_template(split_interface)
+    compiled = batch_compiler(split_interface, pt, batch_size)
+    compiled.save(output_dir)
+    logger.info("exported switchboard to %s", str(output_dir))
 
 
 def export_parser(parser: argparse.ArgumentParser):
@@ -128,77 +123,88 @@ def export_parser(parser: argparse.ArgumentParser):
 
 
 def optimizer_fun(program_args: argparse.Namespace):
-    if program_args.t:
-        _load_attr_from_module_path(program_args.t)()
-
-    artifact_dir = Path(program_args.o)
-    batch_sizes: list[int] = program_args.b
-    memory_sizes: list[int] = program_args.memory
+    artifact_dir = Path(program_args.output).absolute()
     debug_mode: bool = program_args.s
-    split_client: client.SplitClient = _load_attr_from_module_path(program_args.model)
 
+    split_client, client_factory = _load_attr_from_module_path(program_args.model)
     model = split_client.get_model()
     model_name = model.__class__.__name__
     model_hash = utils.hash_model_architecture(model)
 
-    model_spec = ModelSpec(model_name, model_hash, artifact_dir, split_client)
-
-    logger.info("model [cyan]%s[/] [dim](hash %s...)[/] batch size = %d", model_name, model_hash[:12])
+    logger.info("model [cyan]%s[/] [dim](hash %s...)[/]", model_name, model_hash[:12])
     logger.info("artifact directory: %s", str(artifact_dir))
-    logger.info("batch sizes: %s", ", ".join(map(str, batch_sizes)))
-    logger.info("memory sizes: %s", ", ".join(map(str, memory_sizes)))
 
-    # with assert_transaction(model_spec, program_args.no_cache) as requires_update:
-    #     if not requires_update:
-    #         logger.info("model architecture unchanged, skipping optimization")
-    #         return
+    if debug_mode:
+        logger.info("debug mode enabled: intermediates will be saved to artifact directory")
+        template = get_partition_template(split_client)
+        template.provider.visualize_dataflow(artifact_dir / "visualizations", True)
 
-    #     cut, root = get_cut(split_client)
-    #     for batch_size in batch_sizes:
+    if not artifact_dir.exists():
+        profiler = Profiler(client_factory, artifact_dir, dram_limit_percent=0.6)
+        profiler.profile(num_warmup=32, num_iterations=64)
 
-    # _a, _b, generator = split_interface.get_benchmarks(batch_size)
-    # args, kwargs = next(generator)
+    # read profiling_results.json
+    profiling_file = artifact_dir / f"profiling_results_{split_client.get_name()}.json"
+    if not profiling_file.exists():
+        logger.error("inconsistent cache. Try deleting file and rerunning command.", str(artifact_dir))
+        sys.exit(1)
 
-    # gm = utils.capture_graph(model)(*args, **kwargs)
-    # tg = ir.TorchGraph.from_fx_graph(gm, label=model_name)
-    # pp = provider.PartitionProvider(tg)
-    # ap = sorted(pp.all_partitions(), key=lambda p: -sum(len(sg.enclosed_region) for sg in p.subgraphs))
-    # sb = pp.create_switchboard([ap[0]])
-    # logger.info("exporting switchboard to %s", str(output_dir))
-    # sb.save(output_dir)
+    with open(profiling_file, "r") as f:
+        profiling_data = json.load(f)
+
+    DEVICE_MEMORY_GB = {
+        device_idx: (torch.cuda.get_device_properties(device=device_idx).total_memory >> 20) // 1000
+        for device_idx in range(torch.cuda.device_count())
+    }
+
+    # cap it at 4GB minimum or solver takes too long
+    MEMORY_BUCKETS = list(
+        filter(
+            lambda x: x >= 2,
+            sorted(
+                {i for system_mem in DEVICE_MEMORY_GB.values() for i in range(1, system_mem + 1) if system_mem % i == 0}
+            ),
+        )
+    )
+
+    solver = Solver(
+        num_gpus=4,
+        memory_slices=MEMORY_BUCKETS,
+        profile_result=profiling_data,
+    )
+
+    locked, assignment, utilization = solver.solve_leximin_for_batch(batch_size=1)
+
+    logger.info(f"Pipeline Throughput: {min(locked.values()):.2f}")
+    logger.info("Leximin Model Throughputs:")
+    for model in locked:
+        logger.info(f" {model}: {locked[model]:.2f}")
+
+    logger.info("Assignments:")
+    for (model, node, c), count in assignment.items():
+        logger.info(f" - Model {model} assigned {count}x to GPU{node} with memory slice {c}GB")
+
+    logger.info("Node Utilization:")
+    nodes = list(range(4))
+    logger.info(f"Nodes: {nodes}")
+    # logger.info(f"Utilization keys: {utilization.keys()}")
+    for node in nodes:
+        u = 0
+        for (model, n, c), count in assignment.items():
+            if n == node:
+                val = utilization.get(model, {}).get(c, 0)
+                # logger.info(f"  GPU{node}: Model {model}, Count {count}, Slice {c}, Util {val}")
+                u += count * val
+        logger.info(f" - GPU{node}: {u:.1f}%")
 
 
 def optimizer_parser(parser: argparse.ArgumentParser):
     parser.add_argument(
-        "-t",
-        "--trace",
-        type=str,
-        help="module path e.g. src.provider:console_provider for trace provider hook",
-    )
-
-    parser.add_argument(
         "-o",
         "--output",
+        default="./ts_bin",
         type=str,
         help="Output path for the optimization and profiling artifacts",
-    )
-
-    parser.add_argument(
-        "-b",
-        "--batch-size",
-        type=int,
-        nargs="+",
-        default=[1, 2, 4, 8, 16, 32, 64],
-        help="Batch size to use for optimization and profiling",
-    )
-
-    parser.add_argument(
-        "-m",
-        "--memory",
-        type=int,
-        nargs="+",
-        default=[1, 2, 4, 8],
-        help="Memory slice sizes to use for optimization and profiling",
     )
 
     parser.add_argument(

@@ -128,7 +128,16 @@ def run_inference():
     bs = 4
     ds = load_dataset("ethz/food101", split="validation")
     label_names = ds.features["label"].names  # type: ignore
-    loader = DataLoader(Food101CLIPDataset(ds, label_names), batch_size=bs, shuffle=True, collate_fn=collate_fn)
+    loader = DataLoader(
+        Food101CLIPDataset(ds, label_names),
+        batch_size=bs,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=8,
+        pin_memory=True,
+        prefetch_factor=2,
+        persistent_workers=True,
+    )
 
     switchboard = get_model_partition_for_batch_size(bs)
     print(switchboard.switchboard.layout)

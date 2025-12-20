@@ -12,7 +12,7 @@ import torch.fx as fx
 from frozendict import frozendict
 
 import torch_split.core.assertions as assertions
-import torch_split.core.log as logging
+import torch_split.log as logging
 
 logger = logging.get_logger(__name__)
 

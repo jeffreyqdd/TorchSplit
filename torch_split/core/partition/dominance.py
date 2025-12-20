@@ -9,7 +9,7 @@ import graphviz  # type: ignore
 from frozendict import frozendict
 
 from torch_split.core.ir import TorchGraph, ConcreteNode
-import torch_split.core.log as logging
+import torch_split.log as logging
 
 logger = logging.get_logger(__name__)
 

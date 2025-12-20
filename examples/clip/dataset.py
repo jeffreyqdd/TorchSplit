@@ -32,11 +32,7 @@ def collate_fn(args):
         max_length=32,  # type: ignore
         return_tensors="pt",  # type: ignore
     )  # type: ignore
-    return {
-        "l_pixel_values_": enc["pixel_values"],
-        "l_input_ids_": enc["input_ids"],
-        "l_attention_mask_": enc["attention_mask"],
-    }
+    return enc
 
 
 def get_dataset() -> Food101CLIPDataset:
@@ -48,5 +44,14 @@ def get_dataset() -> Food101CLIPDataset:
 def get_dataloader(batch_size: int) -> DataLoader:
     ds = load_dataset("ethz/food101", split="validation")
     label_names = ds.features["label"].names  # type: ignore
-    loader = DataLoader(Food101CLIPDataset(ds, label_names), batch_size=batch_size, shuffle=True)
+    loader = DataLoader(
+        Food101CLIPDataset(ds, label_names),
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        num_workers=8,
+        pin_memory=True,
+        prefetch_factor=2,
+        persistent_workers=True,
+    )
     return loader
