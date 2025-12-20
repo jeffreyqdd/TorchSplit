@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import argparse
-from collections.abc import Callable
 import importlib
 import json
 import os
 import sys
 import warnings
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +14,7 @@ from typing import Any
 import torch
 
 import torch_split.log as logging
-from torch_split.core import SplitClient, utils, batch_compiler, get_partition_template
+from torch_split.core import SplitClient, batch_compiler, get_partition_template, utils
 from torch_split.optimizer import Profiler, Solver
 
 warnings.filterwarnings(
@@ -134,14 +134,15 @@ def optimizer_fun(program_args: argparse.Namespace):
     logger.info("model [cyan]%s[/] [dim](hash %s...)[/]", model_name, model_hash[:12])
     logger.info("artifact directory: %s", str(artifact_dir))
 
+    if not artifact_dir.exists():
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        profiler = Profiler(client_factory, artifact_dir, dram_limit_percent=0.6, max_batch_size=program_args.max_batch)
+        profiler.profile(num_warmup=32, num_iterations=64)
+
     if debug_mode:
         logger.info("debug mode enabled: intermediates will be saved to artifact directory")
         template = get_partition_template(split_client)
         template.provider.visualize_dataflow(artifact_dir / "visualizations", True)
-
-    if not artifact_dir.exists():
-        profiler = Profiler(client_factory, artifact_dir, dram_limit_percent=0.6)
-        profiler.profile(num_warmup=32, num_iterations=64)
 
     # read profiling_results.json
     profiling_file = artifact_dir / f"profiling_results_{split_client.get_name()}.json"
@@ -160,7 +161,7 @@ def optimizer_fun(program_args: argparse.Namespace):
     # cap it at 4GB minimum or solver takes too long
     MEMORY_BUCKETS = list(
         filter(
-            lambda x: x >= 2,
+            lambda x: x >= 8,
             sorted(
                 {i for system_mem in DEVICE_MEMORY_GB.values() for i in range(1, system_mem + 1) if system_mem % i == 0}
             ),
@@ -212,6 +213,13 @@ def optimizer_parser(parser: argparse.ArgumentParser):
         default=False,
         action="store_true",
         help="Output intermediates for debugging and visualization",
+    )
+
+    parser.add_argument(
+        "--max-batch",
+        type=int,
+        default=128,
+        help="Maximum batch size to profile up to (default=128)",
     )
 
     parser.add_argument(

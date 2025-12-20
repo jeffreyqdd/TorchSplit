@@ -7,9 +7,9 @@ import torch.nn as nn
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from PIL import Image
@@ -18,12 +18,11 @@ from transformers import AutoImageProcessor, AutoModel, AutoProcessor, CLIPModel
 
 from torch_split.runtime import SwitchboardRuntime
 
-
-resource = Resource.create({"service.name": "torchsplit-runtime"})
-trace_provider = TracerProvider(resource=resource)
-span_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
-trace_provider.add_span_processor(BatchSpanProcessor(span_exporter))
-trace.set_tracer_provider(trace_provider)
+# resource = Resource.create({"service.name": "torchsplit-runtime"})
+# trace_provider = TracerProvider(resource=resource)
+# span_exporter = OTLPSpanExporter(endpoint="http://localhost:4318/v1/traces")
+# trace_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+# trace.set_tracer_provider(trace_provider)
 
 # metric_exporter = OTLPMetricExporter(endpoint="http://localhost:4318/v1/metrics")
 # metric_reader = PeriodicExportingMetricReader(metric_exporter)
@@ -54,14 +53,14 @@ pixel_values = enc["pixel_values"].to("cuda")  # type: ignore
 input_ids = enc["input_ids"].to("cuda")  # type: ignore
 attention_mask = enc["attention_mask"].to("cuda")  #    type: ignore
 
-for i in range(10):
+for i in range(1):
     result = x.interpret(
         l_pixel_values_=pixel_values,
         l_input_ids_=input_ids,
         l_attention_mask_=attention_mask,
     )
     if i == 0:
-        print(result["C"]["output"])
+        print(result["C"]["output"][0])
 original_output = original_model(
     pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
 ).logits_per_image

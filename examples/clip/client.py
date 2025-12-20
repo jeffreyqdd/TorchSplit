@@ -1,16 +1,17 @@
 import asyncio
-import aiohttp
 import base64
 import csv
 import io
 import os
-import time
 import statistics
-import requests
-import numpy as np
+import time
 from pathlib import Path
-from PIL import Image
+
+import aiohttp
+import numpy as np
+import requests
 from datasets import load_dataset
+from PIL import Image
 from tqdm import tqdm
 
 SERVE_URL = "http://127.0.0.1:8000/"
@@ -57,7 +58,7 @@ dataset = load_dataset(
 )
 label_names = dataset.features["label"].names
 
-NUM_SAMPLES = 10500
+NUM_SAMPLES = 64  # 10500
 
 
 def prepare_payloads():
@@ -95,7 +96,7 @@ async def run_qps_stage(qps, duration, payloads, max_in_flight=1024):
     results = []
     sem = asyncio.Semaphore(max_in_flight)
 
-    timeout = aiohttp.ClientTimeout(total=15)
+    timeout = aiohttp.ClientTimeout(total=60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         loop = asyncio.get_running_loop()
         start_time = loop.time()
@@ -126,7 +127,7 @@ async def main():
     payloads = prepare_payloads()
     print(f"Prepared {NUM_SAMPLES} payloads")
 
-    qps_schedule = [128, 256, 512, 1024, 2048]
+    qps_schedule = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
     duration = 5
 
     for qps in qps_schedule:

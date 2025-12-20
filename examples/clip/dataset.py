@@ -1,6 +1,6 @@
-from transformers import CLIPProcessor  # type: ignore
-from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset  # type: ignore
+from torch.utils.data import DataLoader, Dataset
+from transformers import CLIPProcessor  # type: ignore
 
 
 class Food101CLIPDataset(Dataset):
@@ -41,7 +41,7 @@ def get_dataset() -> Food101CLIPDataset:
     return Food101CLIPDataset(ds, label_names)
 
 
-def get_dataloader(batch_size: int) -> DataLoader:
+def get_dataloader(batch_size: int, num_workers: int = 8, prefetch_factor: int = 2) -> DataLoader:
     ds = load_dataset("ethz/food101", split="validation")
     label_names = ds.features["label"].names  # type: ignore
     loader = DataLoader(
@@ -49,9 +49,9 @@ def get_dataloader(batch_size: int) -> DataLoader:
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=8,
+        num_workers=num_workers,
         pin_memory=True,
-        prefetch_factor=2,
+        prefetch_factor=prefetch_factor,
         persistent_workers=True,
     )
     return loader

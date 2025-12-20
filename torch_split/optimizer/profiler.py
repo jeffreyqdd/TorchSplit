@@ -1,20 +1,20 @@
-import os
-import sys
 import gc
 import json
+import os
+import sys
 import time
-import pynvml
-from pathlib import Path
-from typing import Any, Optional
 from collections import defaultdict
 from collections.abc import Callable, Mapping
+from pathlib import Path
+from typing import Any, Optional
 
 import psutil
+import pynvml
 import torch
 
-from torch_split.core.switchboard import ComponentName
 import torch_split.log as logging
 from torch_split.core import PartitionTemplate, SplitClient, Switchboard, batch_compiler, get_partition_template
+from torch_split.core.switchboard import ComponentName
 
 logger = logging.get_logger(__name__)
 
@@ -73,6 +73,7 @@ class Profiler:
         self,
         client_factory: Callable[[], SplitClient],
         artifacts_dir: Path,
+        max_batch_size: int = 512,
         cache_dir: Optional[Path] = None,
         dram_limit_percent: float = 0.1,
     ):
@@ -81,6 +82,7 @@ class Profiler:
         self.artifacts_dir = artifacts_dir
         self.dram_limit_percent = dram_limit_percent
         self.switchboard_cache: dict[int, dict[str, Switchboard]] = {}
+        self.max_batch_size = max_batch_size
 
         if cache_dir is not None:
             self.cache_dir = cache_dir
@@ -345,6 +347,9 @@ class Profiler:
 
             if not oom_occurred_on_largest_memory_slice:
                 current_batch_size *= 2
+
+            if current_batch_size > self.max_batch_size:
+                break
 
         json.dump(
             result_dict,
