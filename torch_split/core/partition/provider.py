@@ -255,7 +255,9 @@ class PartitionProvider:
             idx2char[idx]: ComponentMetadata(
                 name=idx2char[idx],
                 version_hash=utils.hash_model_architecture(components[idx2char[idx]]),
-                input_parameters=tuple(map(lambda n: n.name, subgraph.inputs)),
+                input_parameters=tuple(
+                    node.name for node in components[idx2char[idx]].graph.nodes if node.op == "placeholder"
+                ),
                 output_parameters=tuple(map(lambda n: n.name, subgraph.outputs)),
             )
             for idx, subgraph in enumerate(all_subgraphs)

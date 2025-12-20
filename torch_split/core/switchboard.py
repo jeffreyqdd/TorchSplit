@@ -150,6 +150,8 @@ class Switchboard:
                 continue
             assert name == meta.name, "should never fail"
             components[name] = utils.load_graph(path / f"{name}.pt")
+            print(name)
+            print(components[name].code)
             components[name].eval()
 
             # validate hashes

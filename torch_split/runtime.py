@@ -1,5 +1,5 @@
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Optional
 import torch
@@ -31,22 +31,34 @@ def _get_dram_utilization() -> int:
     return psutil.virtual_memory().used // (1024 * 1024)
 
 
+def _normalize_call_inputs(value):
+    if isinstance(value, Mapping):
+        return (), value
+    elif isinstance(value, (tuple, list)):
+        return tuple(value), {}
+    else:  # singular value
+        return (value,), {}
+
+
 class SwitchboardRuntime:
-    def __init__(self, switchboard_path: Path, load_only: Optional[list[str]] = None, sampling_interval: int = 4):
-        self.switchboard = Switchboard.load(switchboard_path, load_only=load_only)
+    def __init__(self, switchboard: Switchboard, sampling_interval: int = 4, debug: bool = False):
+        self.switchboard = switchboard
         self.tracer = trace.get_tracer("ts.runtime")
         self.meter = metrics.get_meter("ts.runtime")
         self.sampling_interval = sampling_interval
         self.call_count: defaultdict[str, int] = defaultdict(lambda: 0)
+        self.debug = debug
 
-        self.cpu_gauge = self.meter.create_gauge("cpu_utilization", unit="%", description="CPU usage percentage")
-        self.memory_gauge = self.meter.create_gauge("memory_usage", unit="MB", description="Memory usage in MB")
-        gpu_gauge = self.meter.create_gauge("gpu_utilization", unit="%", description="GPU usage percentage")
+        # self.cpu_gauge = self.meter.create_gauge("cpu_utilization", unit="%", description="CPU usage percentage")
+        # self.memory_gauge = self.meter.create_gauge("memory_usage", unit="MB", description="Memory usage in MB")
+        # gpu_gauge = self.meter.create_gauge("gpu_utilization", unit="%", description="GPU usage percentage")
 
     @staticmethod
-    def from_switchboard(switchboard: Switchboard) -> "SwitchboardRuntime":
-        obj = SwitchboardRuntime.__new__(SwitchboardRuntime, switchboard=switchboard)
-        return obj
+    def from_path(
+        switchboard_path: Path, load_only: Optional[list[str]] = None, sampling_interval: int = 4, debug: bool = False
+    ) -> "SwitchboardRuntime":
+        sb = Switchboard.load(switchboard_path, load_only=load_only)
+        return SwitchboardRuntime(sb, sampling_interval=sampling_interval, debug=debug)
 
     def call(self, component_name: str, *args, **kwargs):
         with self.tracer.start_as_current_span(f"SwitchboardRuntime.call:{component_name}") as span:
@@ -61,71 +73,32 @@ class SwitchboardRuntime:
 
             return output
 
-    def interpret(self, debug: bool = False, **kwargs: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    def interpret(self, **kwargs: Any) -> dict[str, Any]:
         """Execute the switchboard by running components in topological order."""
+
+        data = {}
+        data["<ENTRYPOINT>"] = kwargs
+
         with self.tracer.start_as_current_span("SwitchboardRuntime.interpret") as span:
-            layout = self.switchboard.layout
+            topological_order = self.switchboard.get_topological_order()
 
-            # outputs[i] is a dictionary of available parameters in kwargs format to component i
-            outputs: dict[str, dict[str, Any]] = defaultdict(dict)
-            results: dict[str, Any] = {}
-            intermediates: dict[str, dict[str, Any]] = {}
+            for component_name in topological_order:
+                if self.debug:
+                    print(f"Executing component: {component_name}")
+                    print(f"Inputs: {self.switchboard.layout.metadata[component_name].input_parameters}")
+                    print(f"Outputs: {self.switchboard.layout.metadata[component_name].output_parameters}")
+                dependencies = self.switchboard.depends_on(component_name)
 
-            for arg_name, arg_value in kwargs.items():
-                for entrypoint in layout.entrypoints:
-                    if arg_name in layout.metadata[entrypoint.name].input_parameters:
-                        outputs[entrypoint.name][arg_name] = arg_value
+                args_list = []
+                kwargs_dict = {}
+                for dep in dependencies:
+                    dep_args, dep_kwargs = _normalize_call_inputs(data[dep])
+                    args_list.extend(dep_args)
+                    kwargs_dict.update(dep_kwargs)
 
-            # iterate until no more components can be executed, or until max iterations reached
-            # the idea is to "consume" arguments and put outputs into downstream components' input dicts
-            changed = True
-            iterations = 0
-            max_iterations = len(layout.metadata) * 2
+                data[component_name] = self.call(component_name, *args_list, **kwargs_dict)
 
-            while changed and iterations < max_iterations:
-                changed = False
-
-                # iterate through all models in the dfg field and see if we can run them
-                for component_name, downstream_nodes in layout.dfg.items():
-                    meta = layout.metadata[component_name]
-
-                    # check if we have all inputs for this component
-                    if not all(i in outputs[component_name] for i in meta.input_parameters):
-                        continue
-
-                    changed = True
-                    component_outputs = self.call(component_name, **outputs[component_name])
-                    results[component_name] = component_outputs
-                    intermediates[component_name] = outputs[component_name].copy()
-                    outputs[component_name].clear()
-
-                    if debug:
-                        print(f"Executed component: {component_name}")
-                        for i in meta.input_parameters:
-                            o = intermediates[component_name][i]
-                            if torch.is_tensor(o):
-                                print(f"  Input {i}: {type(o)}, shape={o.shape}, dtype={o.dtype}")
-                            else:
-                                print(f"  Input {i}: {type(o)}")
-                        for o_name, o_value in zip(meta.output_parameters, component_outputs):
-                            if torch.is_tensor(o_value):
-                                print(
-                                    f"  Output {o_name}: {type(o_value)}, shape={o_value.shape}, dtype={o_value.dtype}"
-                                )
-                            else:
-                                print(f"  Output {o_name}: {type(o_value)}")
-
-                    for output_name, output_value in zip(meta.output_parameters, component_outputs):
-                        for downstream in downstream_nodes:
-                            if output_name in map(lambda x: x[0], downstream.mapping):
-                                outputs[downstream.name][output_name] = output_value
-
-            if self._should_sample("interpret"):
-                self.cpu_gauge.set(_get_cpu_utilization())
-                self.memory_gauge.set(_get_dram_utilization())
-                span.add_event("metrics_recorded")
-
-            return results, intermediates
+        return data
 
     def _should_sample(self, identifier: str) -> bool:
         self.call_count[identifier] += 1

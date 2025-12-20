@@ -31,11 +31,12 @@ meter_provider = MeterProvider(metric_readers=[metric_reader], resource=resource
 metrics.set_meter_provider(meter_provider)
 
 
-x = SwitchboardRuntime(Path("/dev/shm/clipfullwrapper_bs_1.tspartd"))
+x = SwitchboardRuntime.from_path(Path("/dev/shm/switchboard.tspartd"), debug=True)
+x.switchboard.to_device(torch.device("cuda"))
 
 processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 original_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-original_model = original_model.to("cuda")
+original_model = original_model.to("cuda")  # type: ignore
 original_model.eval()
 
 # basic input
@@ -48,22 +49,21 @@ enc = processor(
     max_length=32,  # type: ignore
     return_tensors="pt",  # type: ignore
 )  # type: ignore
-pixel_values = enc["pixel_values"].to("cuda")
-input_ids = enc["input_ids"].to("cuda")
-attention_mask = enc["attention_mask"].to("cuda")
+pixel_values = enc["pixel_values"].to("cuda")  # type: ignore
+input_ids = enc["input_ids"].to("cuda")  # type: ignore
+attention_mask = enc["attention_mask"].to("cuda")  #    type: ignore
 
 for i in range(1):
-    result, _ = x.interpret(
-        debug=True,
+    result = x.interpret(
         l_pixel_values_=pixel_values,
         l_input_ids_=input_ids,
         l_attention_mask_=attention_mask,
     )
-    print(result["C"][0].shape)
+    print(result["C"]["output"])
 original_output = original_model(
     pixel_values=pixel_values, input_ids=input_ids, attention_mask=attention_mask
 ).logits_per_image
-print(original_output.shape)
+print(original_output)
 
 # print("original", original_output)
 # print("split", result.keys())

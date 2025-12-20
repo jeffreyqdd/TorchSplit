@@ -25,6 +25,7 @@ def capture_graph(m: nn.Module) -> Callable[..., fx.GraphModule]:
             )(*args, **kwargs)
             if isinstance(export_result, dynamo.eval_frame.ExportResult):
                 gm = export_result.graph_module
+                print(gm.code)
                 return gm
             raise ValueError("Export did not return an ExportResult")
         except dynamo_exc.TorchRuntimeError as e:
@@ -71,9 +72,12 @@ def extract_subgraph(
         else:
             new_graph.output(tuple(env[output.name] for output in o))
     new_gm = fx.GraphModule(gm, new_graph)
+    print("=================================")
+    print(new_gm.code)
     new_gm.eval()
     new_gm.graph.eliminate_dead_code()
     new_gm.recompile()
+    print(new_gm.code)
     new_gm.graph.lint()
     return new_gm
 
