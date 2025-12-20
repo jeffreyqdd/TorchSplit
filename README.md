@@ -71,6 +71,27 @@ python3 ./examples/clip/client.py
 or `serve run examples.clip.monolithic_server:app` to run the monolithic server.
 
 
+Profiled data in `examples/clip_data` can be used to visualize latency and GPU utilization. To generate the plots, run:
+
+```
+Performance Improvement Summary:
+QPS        Latency Improvement (%)   Throughput Improvement (%)
+------------------------------------------------------------
+1          48.18                     1.68
+2          49.26                     1.68
+4          50.94                     1.66
+8          50.62                     1.79
+16         52.07                     0.52
+32         52.23                     1.13
+64         54.91                     1.38
+128        67.15                     3.46
+256        90.02                     43.13
+512        63.77                     76.19
+1024       38.23                     58.60
+2048       37.67                     66.21
+------------------------------------------------------------
+```
+
 
 ## Docker and Tracing
 Optionally, this repo provides a tracing hook to export traces to an OpenTelemetry collector. You can install signoz [here](https://github.com/SigNoz/signoz.git). 

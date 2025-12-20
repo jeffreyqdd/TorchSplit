@@ -34,6 +34,9 @@ dependencies = [
     "tqdm (>=4.67.1,<5.0.0)",
     "gurobipy (>=13.0.0,<14.0.0)",
     "ray[serve] (==2.40)",
+    "matplotlib (>=3.10.8,<4.0.0)",
+    "pandas (>=2.3.3,<3.0.0)",
+    "seaborn (>=0.13.2,<0.14.0)",
 ]
 
 [tool.poetry.group.flmr.dependencies]

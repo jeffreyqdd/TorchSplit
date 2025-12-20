@@ -173,21 +173,21 @@ async def main():
                     ]
                 )
 
-        with open(SUMMARY_PATH, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                [
-                    qps,
-                    duration,
-                    expected,
-                    actual,
-                    success_rate,
-                    achieved_qps,
-                    p50,
-                    p90,
-                    p99,
-                ]
-            )
+        # with open(SUMMARY_PATH, "a", newline="") as f:
+        #     writer = csv.writer(f)
+        #     writer.writerow(
+        #         [
+        #             qps,
+        #             duration,
+        #             expected,
+        #             actual,
+        #             success_rate,
+        #             achieved_qps,
+        #             p50,
+        #             p90,
+        #             p99,
+        #         ]
+        #     )
 
 
 if __name__ == "__main__":
